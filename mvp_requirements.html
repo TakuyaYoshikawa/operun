@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans JP',sans-serif;color:#1a1a1a;font-size:14px;line-height:1.6;background:#f7f8f7;padding:24px}
+.wrap{max-width:820px;margin:0 auto}
+h1{font-size:17px;font-weight:700;margin-bottom:6px}
+.subtitle{font-size:12px;color:#666;margin-bottom:20px}
+.sec{font-size:10px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;color:#888;margin-bottom:12px}
+.phase{border:0.5px solid #d0d8d0;border-radius:12px;margin-bottom:16px;overflow:hidden;background:#fff}
+.phase-header{padding:14px 18px;display:flex;align-items:center;gap:12px;border-bottom:0.5px solid #e8ece8}
+.p1-h{background:#e8f5ed}.p2-h{background:#e6f1fb}.p3-h{background:#faeeda}
+.phase-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.p1-n{background:#1a7a3c;color:#fff}.p2-n{background:#185FA5;color:#fff}.p3-n{background:#854F0B;color:#fff}
+.phase-meta{flex:1}
+.phase-title{font-size:14px;font-weight:700}
+.phase-period{font-size:11px;color:#666;margin-top:1px}
+.phase-goal{font-size:12px;font-weight:500;text-align:right;white-space:nowrap}
+.p1-g{color:#1a7a3c}.p2-g{color:#185FA5}.p3-g{color:#854F0B}
+.feat-grid{padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.feat-grid{grid-template-columns:1fr}}
+.feat{background:#f7f8f7;border:0.5px solid #d8ddd8;border-radius:8px;padding:12px 14px}
+.feat-name{font-size:13px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+.feat-desc{font-size:12px;color:#555;line-height:1.6}
+.tag{font-size:10px;padding:1px 7px;border-radius:10px;font-weight:500;flex-shrink:0}
+.must{background:#fce8e8;color:#a32d2d}
+.should{background:#faeeda;color:#854F0B}
+.nice{background:#f0f0ec;color:#666;border:0.5px solid #ccc}
+.divider{border:none;border-top:0.5px solid #e0e4e0;margin:16px 0}
+.cut-box{background:#f7f8f7;border:0.5px solid #d0d8d0;border-radius:10px;padding:14px 18px;margin-bottom:16px}
+.cut-title{font-size:13px;font-weight:700;margin-bottom:8px;color:#666}
+.cut-list{display:flex;flex-wrap:wrap;gap:6px}
+.cut-item{font-size:11px;padding:3px 10px;border-radius:20px;background:#fff;border:0.5px solid #ccc;color:#999;text-decoration:line-through}
+.stack-box{background:#e6f1fb;border:0.5px solid #b5d4f4;border-radius:10px;padding:14px 18px}
+.stack-title{font-size:13px;font-weight:700;margin-bottom:10px;color:#185FA5}
+.stack-row{display:grid;grid-template-columns:100px 1fr;gap:6px;margin-bottom:6px;align-items:start}
+.stack-label{font-size:11px;color:#666;padding-top:1px}
+.stack-val{font-size:12px;color:#1a1a1a}
+.legend{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#666}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>MVP機能要件マップ</h1>
+<p class="subtitle">Operun / 金属加工・部品加工業向け軽量スケジューラ　3〜4ヶ月・一人開発版</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="tag must">必須</span>なければ使い物にならない</div>
+  <div class="legend-item"><span class="tag should">推奨</span>差別化に必要</div>
+  <div class="legend-item"><span class="tag nice">後回し</span>v2以降でよい</div>
+</div>
+
+<!-- Phase 1 -->
+<div class="phase">
+  <div class="phase-header p1-h">
+    <div class="phase-num p1-n">1</div>
+    <div class="phase-meta">
+      <div class="phase-title">コア：動く計画ボード</div>
+      <div class="phase-period">1〜6週目　目標：最初の1社に無料で使ってもらう</div>
+    </div>
+    <div class="phase-goal p1-g">6週間</div>
+  </div>
+  <div class="feat-grid">
+    <div class="feat">
+      <div class="feat-name"><span class="tag must">必須</span>受注・工程マスタ登録</div>
+      <div class="feat-desc">品番・工程・標準作業時間・設備を登録。CSVインポートで既存Excelから移行できること。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag must">必須</span>ガントチャート自動生成</div>
+      <div class="feat-desc">受注を入力すると設備ごとのガントチャートが自動で並ぶ。ドラッグで手動調整もできること。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag must">必須</span>基本制約設定</div>
+      <div class="feat-desc">稼働日・非稼働日・1日あたり稼働時間・設備ごとの段取り時間を設定できること。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag must">必須</span>納期アラート</div>
+      <div class="feat-desc">納期を超過しそうな受注をガントチャート上で色分け表示。一目で危険な案件がわかること。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 2 -->
+<div class="phase">
+  <div class="phase-header p2-h">
+    <div class="phase-num p2-n">2</div>
+    <div class="phase-meta">
+      <div class="phase-title">差別化：割り込み対応と見える化</div>
+      <div class="phase-period">7〜12週目　目標：有料転換・2〜3社に展開</div>
+    </div>
+    <div class="phase-goal p2-g">6週間</div>
+  </div>
+  <div class="feat-grid">
+    <div class="feat">
+      <div class="feat-name"><span class="tag should">推奨</span>割り込み受注の即時再計算</div>
+      <div class="feat-desc">特急案件を追加すると全工程を自動で組み直す。影響を受ける受注と新しい完成日を即表示。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag should">推奨</span>設備負荷グラフ</div>
+      <div class="feat-desc">設備ごとの稼働率を棒グラフで表示。残業が必要かどうか、どこがボトルネックかを数値で把握できる。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag should">推奨</span>納期シミュレーション</div>
+      <div class="feat-desc">「この受注を今日入れたら何日に上がるか」を画面上で即答できる。受注担当者向け機能。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag nice">後回し</span>進捗実績入力</div>
+      <div class="feat-desc">現場からスマホで作業完了を報告する機能。v1では計画側だけに集中する。</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 3 -->
+<div class="phase">
+  <div class="phase-header p3-h">
+    <div class="phase-num p3-n">3</div>
+    <div class="phase-meta">
+      <div class="phase-title">プロプラン：数理最適化エンジン</div>
+      <div class="phase-period">13〜16週目　目標：プロプラン販売開始</div>
+    </div>
+    <div class="phase-goal p3-g">4週間</div>
+  </div>
+  <div class="feat-grid">
+    <div class="feat">
+      <div class="feat-name"><span class="tag should">推奨</span>段取り最小化スケジューリング</div>
+      <div class="feat-desc">材質・金型ごとの段取りコストをパラメータ化し、切り替え回数が最小になる順序を自動計算。数理最適化スキルを活かす核心機能。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag should">推奨</span>複数目的最適化</div>
+      <div class="feat-desc">「納期遵守率を最大化しつつ段取り時間を最小化」など、トレードオフをパレート最適で提示。スタンダードとの明確な差別化。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag nice">後回し</span>需要予測連携</div>
+      <div class="feat-desc">過去受注データから次月の受注量を予測。機械学習モデルの本格活用はv2以降。</div>
+    </div>
+    <div class="feat">
+      <div class="feat-name"><span class="tag nice">後回し</span>API連携（基幹システム）</div>
+      <div class="feat-desc">ERPや受注管理システムとのAPI連携。個社対応になるためv2以降の有償オプション。</div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<div class="cut-box">
+  <div class="cut-title">意図的にv1から外すもの（作りすぎない）</div>
+  <div class="cut-list">
+    <span class="cut-item">在庫管理</span>
+    <span class="cut-item">受発注管理</span>
+    <span class="cut-item">原価計算</span>
+    <span class="cut-item">品質管理</span>
+    <span class="cut-item">モバイルアプリ</span>
+    <span class="cut-item">多拠点対応</span>
+    <span class="cut-item">給与・勤怠連携</span>
+    <span class="cut-item">帳票印刷</span>
+  </div>
+</div>
+
+<div class="stack-box">
+  <div class="stack-title">推奨技術スタック（一人・3〜4ヶ月）</div>
+  <div class="stack-row"><span class="stack-label">フロントエンド</span><span class="stack-val">React + TypeScript　ガントチャートは <strong>DHTMLX Gantt</strong> or <strong>Bryntum</strong>（車輪の再発明をしない）</span></div>
+  <div class="stack-row"><span class="stack-label">バックエンド</span><span class="stack-val">Python（FastAPI）　スケジューリングロジックをそのまま書ける</span></div>
+  <div class="stack-row"><span class="stack-label">最適化</span><span class="stack-val">PuLP or OR-Tools（段取り最小化）　Phase 3から投入</span></div>
+  <div class="stack-row"><span class="stack-label">DB</span><span class="stack-val">PostgreSQL on Supabase　認証・RLS・リアルタイムが無料で使える</span></div>
+  <div class="stack-row"><span class="stack-label">インフラ</span><span class="stack-val">フロント：Vercel　バック：Railway or Render　初期コスト月数千円</span></div>
+  <div class="stack-row"><span class="stack-label">決済</span><span class="stack-val">Stripe　サブスクリプション管理が最短1日で実装できる</span></div>
+</div>
+
+</div>
+</body>
+</html>
