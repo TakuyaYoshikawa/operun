@@ -1,7 +1,7 @@
 """
-CSVインポートエンドポイント
-- POST /api/csv/orders   — 受注CSVを一括インポート
-- POST /api/csv/machines — 設備マスタCSVを一括インポート
+CSVインポートエンドポイント（テナント対応）
+- POST /api/csv/orders    — 受注CSVを一括インポート
+- POST /api/csv/machines  — 設備マスタCSVを一括インポート
 - POST /api/csv/processes — 工程マスタCSVを一括インポート
 
 CSVフォーマット（受注）:
@@ -27,12 +27,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models
+from app.auth import get_current_tenant_id
 
 router = APIRouter()
 
 
 def _parse_csv(file_bytes: bytes) -> List[dict]:
-    """UTF-8（BOM付き対応）でCSVをパースしてdict列のリストを返す。"""
     text = file_bytes.decode("utf-8-sig").strip()
     reader = csv.DictReader(io.StringIO(text))
     return [row for row in reader]
@@ -40,16 +40,11 @@ def _parse_csv(file_bytes: bytes) -> List[dict]:
 
 @router.post("/orders", status_code=200)
 async def import_orders_csv(
-    file: UploadFile = File(..., description="受注CSVファイル"),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """
-    受注CSVを一括インポートする。
-    既存の order_number は上書き（upsert）する。
-
-    必須列: order_number, product_name, product_code, quantity, due_date
-    任意列: priority(デフォルト3), status(デフォルトpending), note
-    """
+    """受注CSVを一括インポート（upsert）。テナント内での order_number で識別。"""
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="CSVファイルをアップロードしてください")
 
@@ -63,9 +58,8 @@ async def import_orders_csv(
     updated = 0
     errors: List[dict] = []
 
-    for i, row in enumerate(rows, start=2):  # ヘッダーを除いた行番号
+    for i, row in enumerate(rows, start=2):
         try:
-            # 必須フィールドの検証
             order_number = row["order_number"].strip()
             product_name = row["product_name"].strip()
             product_code = row["product_code"].strip()
@@ -82,7 +76,8 @@ async def import_orders_csv(
                 priority = 3
 
             existing = db.query(models.Order).filter(
-                models.Order.order_number == order_number
+                models.Order.tenant_id == tenant_id,
+                models.Order.order_number == order_number,
             ).first()
 
             if existing:
@@ -95,7 +90,8 @@ async def import_orders_csv(
                 existing.note = (row.get("note") or "").strip() or None
                 updated += 1
             else:
-                order = models.Order(
+                db.add(models.Order(
+                    tenant_id=tenant_id,
                     order_number=order_number,
                     product_name=product_name,
                     product_code=product_code,
@@ -104,34 +100,23 @@ async def import_orders_csv(
                     priority=priority,
                     status=(row.get("status") or "pending").strip(),
                     note=(row.get("note") or "").strip() or None,
-                )
-                db.add(order)
+                ))
                 created += 1
 
         except (KeyError, ValueError) as e:
             errors.append({"row": i, "error": str(e), "data": row})
 
     db.commit()
-
-    return {
-        "created": created,
-        "updated": updated,
-        "error_count": len(errors),
-        "errors": errors,
-    }
+    return {"created": created, "updated": updated, "error_count": len(errors), "errors": errors}
 
 
 @router.post("/machines", status_code=200)
 async def import_machines_csv(
-    file: UploadFile = File(..., description="設備マスタCSVファイル"),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """
-    設備マスタCSVを一括インポートする（upsert）。
-
-    必須列: code, name
-    任意列: daily_capacity_hours(デフォルト8.0), setup_time_minutes(デフォルト30.0)
-    """
+    """設備マスタCSVを一括インポート（upsert）。"""
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="CSVファイルをアップロードしてください")
 
@@ -156,7 +141,8 @@ async def import_machines_csv(
             setup_minutes = float(row.get("setup_time_minutes") or "30.0")
 
             existing = db.query(models.Machine).filter(
-                models.Machine.code == code
+                models.Machine.tenant_id == tenant_id,
+                models.Machine.code == code,
             ).first()
 
             if existing:
@@ -165,38 +151,29 @@ async def import_machines_csv(
                 existing.setup_time_minutes = setup_minutes
                 updated += 1
             else:
-                machine = models.Machine(
+                db.add(models.Machine(
+                    tenant_id=tenant_id,
                     code=code,
                     name=name,
                     daily_capacity_hours=daily_hours,
                     setup_time_minutes=setup_minutes,
-                )
-                db.add(machine)
+                ))
                 created += 1
 
         except (KeyError, ValueError) as e:
             errors.append({"row": i, "error": str(e), "data": row})
 
     db.commit()
-
-    return {
-        "created": created,
-        "updated": updated,
-        "error_count": len(errors),
-        "errors": errors,
-    }
+    return {"created": created, "updated": updated, "error_count": len(errors), "errors": errors}
 
 
 @router.post("/processes", status_code=200)
 async def import_processes_csv(
-    file: UploadFile = File(..., description="工程マスタCSVファイル"),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """
-    工程マスタCSVを一括インポートする（upsert）。
-
-    必須列: code, name, standard_time_per_unit
-    """
+    """工程マスタCSVを一括インポート（upsert）。"""
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="CSVファイルをアップロードしてください")
 
@@ -221,7 +198,8 @@ async def import_processes_csv(
                 raise ValueError("standard_time_per_unit は0より大きい値が必要です")
 
             existing = db.query(models.Process).filter(
-                models.Process.code == code
+                models.Process.tenant_id == tenant_id,
+                models.Process.code == code,
             ).first()
 
             if existing:
@@ -229,22 +207,16 @@ async def import_processes_csv(
                 existing.standard_time_per_unit = std_time
                 updated += 1
             else:
-                process = models.Process(
+                db.add(models.Process(
+                    tenant_id=tenant_id,
                     code=code,
                     name=name,
                     standard_time_per_unit=std_time,
-                )
-                db.add(process)
+                ))
                 created += 1
 
         except (KeyError, ValueError) as e:
             errors.append({"row": i, "error": str(e), "data": row})
 
     db.commit()
-
-    return {
-        "created": created,
-        "updated": updated,
-        "error_count": len(errors),
-        "errors": errors,
-    }
+    return {"created": created, "updated": updated, "error_count": len(errors), "errors": errors}
