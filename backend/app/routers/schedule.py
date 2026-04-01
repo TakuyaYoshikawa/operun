@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, date
 
 from app.database import get_db
 from app import models
@@ -147,7 +147,6 @@ def simulate_new_order(payload: dict, db: Session = Depends(get_db)):
     新規受注を差し込んだ場合の影響をシミュレーション。
     納期シミュレーション機能（Phase 2）で使用。
     """
-    from datetime import date as date_type
     try:
         new_op = OperationInput(
             order_id=-1,
@@ -156,7 +155,7 @@ def simulate_new_order(payload: dict, db: Session = Depends(get_db)):
             sequence=1,
             machine_id=payload["machine_id"],
             duration_hours=payload["duration_hours"],
-            due_date=date_type.fromisoformat(payload["due_date"]),
+            due_date=date.fromisoformat(payload["due_date"]),
             priority=payload.get("priority", 3),
             is_urgent=payload.get("is_urgent", False),
         )
@@ -168,3 +167,75 @@ def simulate_new_order(payload: dict, db: Session = Depends(get_db)):
     result = engine.simulate_insert(new_op, existing)
 
     return result
+
+
+def _calc_business_days(start: datetime, end: datetime) -> int:
+    """稼働日数（土日除く）を計算する。"""
+    if end is None or start is None:
+        return 0
+    count = 0
+    current = start.date()
+    end_date = end.date()
+    while current <= end_date:
+        if current.weekday() != 6:  # 日曜除く
+            count += 1
+        current = current.replace(day=current.day + 1) if current.day < 28 else \
+            (current.replace(month=current.month + 1, day=1) if current.month < 12 else
+             current.replace(year=current.year + 1, month=1, day=1))
+    return max(count - 1, 0)  # 開始日を含めないため -1
+
+
+def _format_date_ja(dt: datetime) -> str:
+    """datetime を「2026年4月8日（水）」形式にフォーマットする。"""
+    WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
+    w = WEEKDAYS[dt.weekday()]
+    return f"{dt.year}年{dt.month}月{dt.day}日（{w}）"
+
+
+@router.post("/simulate/delivery")
+def check_delivery_date(payload: dict, db: Session = Depends(get_db)):
+    """
+    F-05 納期回答支援。
+    新規受注を差し込んだ場合の完成予定日と既存受注への影響を返す。
+
+    リクエスト例:
+    {
+        "product_name": "部品A",
+        "machine_id": 1,
+        "duration_hours": 8.0,
+        "due_date": "2026-04-30",
+        "priority": 3,
+        "is_urgent": false
+    }
+    """
+    try:
+        new_op = OperationInput(
+            order_id=-1,
+            order_number="(試算)",
+            product_name=payload.get("product_name", "新規"),
+            sequence=1,
+            machine_id=payload["machine_id"],
+            duration_hours=payload["duration_hours"],
+            due_date=date.fromisoformat(payload["due_date"]),
+            priority=payload.get("priority", 3),
+            is_urgent=payload.get("is_urgent", False),
+        )
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    engine = _build_engine(db)
+    existing = _build_operation_inputs(db)
+    result = engine.simulate_insert(new_op, existing)
+
+    completion: datetime | None = result["new_order_completion"]
+    feasible = completion is not None
+
+    return {
+        "feasible": feasible,
+        "completion_date": _format_date_ja(completion) if completion else None,
+        "completion_datetime": completion.isoformat() if completion else None,
+        "business_days": _calc_business_days(datetime.now(), completion) if completion else None,
+        "on_time": result.get("new_order_delayed") is False if feasible else None,
+        "affected_orders": result["delayed_order_numbers"],
+        "affected_count": result["total_delayed_orders"],
+    }
