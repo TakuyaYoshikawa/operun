@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 load_dotenv()
-from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource
+from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders
 from app.database import engine, Base
 
 Base.metadata.create_all(bind=engine)
@@ -28,6 +28,7 @@ app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(product_templates.router, prefix="/api/product-templates", tags=["品番テンプレート"])
 app.include_router(materials.router, prefix="/api/materials", tags=["材料在庫"])
 app.include_router(outsource.router, prefix="/api/outsource", tags=["外注管理"])
+app.include_router(purchase_orders.router, prefix="/api/purchase-orders", tags=["発注管理"])
 
 @app.get("/")
 def root():

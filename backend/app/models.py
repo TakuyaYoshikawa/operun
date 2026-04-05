@@ -229,6 +229,7 @@ class Material(Base):
 
     tenant = relationship("Tenant")
     stock_logs = relationship("MaterialStockLog", back_populates="material", cascade="all, delete-orphan")
+    purchase_orders = relationship("PurchaseOrder", back_populates="material", cascade="all, delete-orphan")
 
 
 class MaterialStockLog(Base):
@@ -245,3 +246,26 @@ class MaterialStockLog(Base):
 
     tenant = relationship("Tenant")
     material = relationship("Material", back_populates="stock_logs")
+
+
+class PurchaseOrder(Base):
+    """原料発注・納入予定"""
+    __tablename__ = "purchase_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    po_number = Column(String, nullable=False)                  # 発注番号（例：PO-2026-001）
+    supplier_name = Column(String, nullable=False)
+    quantity = Column(Float, nullable=False)                    # 発注数量
+    unit_price = Column(Float, nullable=True)                   # 発注単価
+    order_date = Column(Date, nullable=False)                   # 発注日
+    expected_delivery_date = Column(Date, nullable=False)       # 納入予定日
+    actual_delivery_date = Column(Date, nullable=True)          # 実際の納入日
+    received_quantity = Column(Float, nullable=True)            # 実際の受入数量
+    status = Column(String, default="ordered")                  # ordered / partial / received / cancelled
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    material = relationship("Material", back_populates="purchase_orders")
