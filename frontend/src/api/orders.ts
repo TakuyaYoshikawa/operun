@@ -2,6 +2,17 @@ import api from './client'
 
 export type OrderStatus = 'pending' | 'in_progress' | 'done'
 
+export interface Operation {
+  id: number
+  sequence: number
+  machine_id: number
+  process_id: number | null
+  duration_hours: number
+  is_urgent: boolean
+  planned_start: string | null
+  planned_end: string | null
+}
+
 export interface Order {
   id: number
   order_number: string
@@ -13,6 +24,7 @@ export interface Order {
   status: OrderStatus
   note?: string
   created_at: string
+  operations: Operation[]
 }
 
 export interface OrderCreate {
@@ -26,6 +38,13 @@ export interface OrderCreate {
   note?: string
 }
 
+export interface OperationCreate {
+  machine_id: number
+  process_id?: number | null
+  duration_hours: number
+  is_urgent?: boolean
+}
+
 export const ordersApi = {
   list: (params?: { status?: string; priority?: number }) =>
     api.get<{ total: number; items: Order[] }>('/orders', { params }),
@@ -34,4 +53,15 @@ export const ordersApi = {
   update: (id: number, data: Partial<OrderCreate>) =>
     api.put<Order>(`/orders/${id}`, data),
   delete: (id: number) => api.delete(`/orders/${id}`),
+
+  operations: {
+    list: (orderId: number) =>
+      api.get<Operation[]>(`/orders/${orderId}/operations`),
+    add: (orderId: number, data: OperationCreate) =>
+      api.post<Operation>(`/orders/${orderId}/operations`, data),
+    update: (orderId: number, opId: number, data: Partial<OperationCreate>) =>
+      api.put<Operation>(`/orders/${orderId}/operations/${opId}`, data),
+    delete: (orderId: number, opId: number) =>
+      api.delete(`/orders/${orderId}/operations/${opId}`),
+  },
 }

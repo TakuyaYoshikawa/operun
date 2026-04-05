@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import api from './api/client'
+import LoginPage from './pages/LoginPage'
 import OrdersPage from './pages/OrdersPage'
 import MastersPage from './pages/MastersPage'
 import GanttPage from './pages/GanttPage'
@@ -9,16 +11,20 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 })
 
-type Page = 'orders' | 'masters' | 'gantt' | 'delivery'
+type Page = 'gantt' | 'orders' | 'masters' | 'delivery'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
-  { id: 'gantt', label: 'ガントチャート', icon: '📊' },
-  { id: 'orders', label: '受注管理', icon: '📋' },
-  { id: 'masters', label: 'マスタ管理', icon: '⚙️' },
-  { id: 'delivery', label: '納期シミュレーター', icon: '🔍' },
+  { id: 'gantt',    label: 'ガントチャート',      icon: '📊' },
+  { id: 'orders',   label: '受注管理',            icon: '📋' },
+  { id: 'masters',  label: 'マスタ管理',          icon: '⚙️' },
+  { id: 'delivery', label: '納期シミュレーター',  icon: '🔍' },
 ]
 
-function Layout({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
+function Layout({ page, setPage, onLogout }: {
+  page: Page
+  setPage: (p: Page) => void
+  onLogout: () => void
+}) {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <aside className="w-52 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
@@ -42,13 +48,20 @@ function Layout({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
             </button>
           ))}
         </nav>
-        <div className="px-4 py-3 border-t border-gray-100 text-xs text-gray-400">Phase 1 MVP</div>
+        <div className="px-3 py-3 border-t border-gray-100">
+          <button
+            onClick={onLogout}
+            className="w-full px-3 py-2 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg text-left transition-colors"
+          >
+            ログアウト
+          </button>
+        </div>
       </aside>
 
       <main className="flex-1 overflow-auto">
-        {page === 'gantt' && <GanttPage />}
-        {page === 'orders' && <OrdersPage />}
-        {page === 'masters' && <MastersPage />}
+        {page === 'gantt'    && <GanttPage />}
+        {page === 'orders'   && <OrdersPage />}
+        {page === 'masters'  && <MastersPage />}
         {page === 'delivery' && <DeliverySimPage />}
       </main>
     </div>
@@ -56,10 +69,40 @@ function Layout({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
 }
 
 export default function App() {
+  const [token, setToken] = useState<string | null>(
+    () => localStorage.getItem('operun_token')
+  )
   const [page, setPage] = useState<Page>('gantt')
+
+  const handleLogin = (t: string) => {
+    localStorage.setItem('operun_token', t)
+    api.defaults.headers.common['Authorization'] = `Bearer ${t}`
+    setToken(t)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('operun_token')
+    delete api.defaults.headers.common['Authorization']
+    queryClient.clear()
+    setToken(null)
+  }
+
+  // 初回ロード時にトークンをaxiosに設定
+  if (token && !api.defaults.headers.common['Authorization']) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+  }
+
+  if (!token) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <LoginPage onLogin={handleLogin} />
+      </QueryClientProvider>
+    )
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
-      <Layout page={page} setPage={setPage} />
+      <Layout page={page} setPage={setPage} onLogout={handleLogout} />
     </QueryClientProvider>
   )
 }
