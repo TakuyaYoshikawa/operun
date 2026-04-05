@@ -26,8 +26,13 @@ export interface DeliverySimResult {
 }
 
 export const scheduleApi = {
-  runSchedule: () => api.post('/schedule/run'),
-  getGantt: () => api.get<{ tasks: GanttTask[]; total: number }>('/schedule/gantt'),
+  runSchedule: () => api.post<{ scheduled: number; delayed_count: number; draft: boolean; delayed_orders: { order_number: string; product_name: string; planned_end: string; due_date: string; delay_days: number }[] }>('/schedule/run'),
+  createDraft: () => api.post<{ created: number }>('/schedule/create-draft'),
+  commitDraft: () => api.post<{ committed: number }>('/schedule/commit'),
+  discardDraft: () => api.post<{ discarded: number }>('/schedule/discard'),
+  getGantt: (draft = false) => api.get<{ tasks: GanttTask[]; total: number; has_draft: boolean }>('/schedule/gantt', { params: draft ? { draft: true } : undefined }),
+  updateDraftOp: (opId: number, payload: { draft_start: string; draft_end: string; draft_machine_id?: number }) =>
+    api.patch<{ ok: boolean }>(`/schedule/draft/${opId}`, payload),
   simulateDelivery: (payload: {
     product_name: string
     machine_id: number

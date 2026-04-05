@@ -5,7 +5,7 @@ import type { ChatMessage, ParsedOrder } from '../api/ai'
 import { ordersApi } from '../api/orders'
 import { customersApi } from '../api/customers'
 
-type Mode = 'order' | 'chat'
+type Mode = 'order' | 'chat' | 'agent'
 
 // チャットメッセージの型（テキスト or 受注フォーム）
 type Message =
@@ -412,6 +412,146 @@ function StatusChat() {
   )
 }
 
+// ── AIエージェントチャット ────────────────────────────────────────────────────
+
+const TOOL_LABEL: Record<string, string> = {
+  search_materials: '材料を検索',
+  receive_stock: '在庫を入庫',
+  issue_stock: '在庫を出庫',
+  create_purchase_order: '発注を作成',
+  search_orders: '受注を検索',
+  search_customers: '顧客を検索',
+  create_customer: '顧客を登録',
+  get_schedule_summary: 'スケジュールを確認',
+  run_schedule: 'スケジュールを実行',
+}
+
+function ToolCallCard({ tool, input, result }: { tool: string; input: Record<string, unknown>; result: unknown }) {
+  const [open, setOpen] = useState(false)
+  const label = TOOL_LABEL[tool] ?? tool
+  const isError = result != null && typeof result === 'object' && 'error' in (result as Record<string, unknown>)
+
+  return (
+    <div className={`border rounded-lg text-xs overflow-hidden mb-1 ${isError ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left"
+      >
+        <span className={isError ? 'text-red-500' : 'text-blue-500'}>🔧</span>
+        <span className={`font-medium ${isError ? 'text-red-600' : 'text-gray-600'}`}>{label}</span>
+        <span className="ml-auto text-gray-400">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2 space-y-1 border-t border-gray-200">
+          <div className="text-gray-500 mt-1">入力: <span className="font-mono text-gray-700">{JSON.stringify(input)}</span></div>
+          <div className="text-gray-500">結果: <span className="font-mono text-gray-700">{JSON.stringify(result)}</span></div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type AgentMessage =
+  | { type: 'text'; role: 'user' | 'assistant'; content: string }
+  | { type: 'tool-calls'; calls: { tool: string; input: Record<string, unknown>; result: unknown }[] }
+
+function AgentChat() {
+  const [messages, setMessages] = useState<AgentMessage[]>([
+    { type: 'text', role: 'assistant', content: 'エージェントモードです。受注登録・在庫管理・顧客登録など、すべての操作をチャットで指示できます。\n\n例：\n・「鉄板 SUS304 t2.0 を100枚入庫して」\n・「ABC商事に品番A100を50個、納期5/31で受注登録」\n・「在庫が少ない材料を確認して」' },
+  ])
+  const [input, setInput] = useState('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const historyRef = useRef<ChatMessage[]>([])
+
+  const agentMut = useMutation({
+    mutationFn: (msgs: ChatMessage[]) => aiApi.agent(msgs),
+    onSuccess: (res) => {
+      const { reply, tool_calls } = res.data
+      historyRef.current = [...historyRef.current, { role: 'assistant', content: reply }]
+      setMessages(prev => [
+        ...(tool_calls.length > 0 ? [...prev, { type: 'tool-calls' as const, calls: tool_calls }] : prev),
+        { type: 'text', role: 'assistant', content: reply },
+      ])
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : '不明なエラー'
+      setMessages(prev => [...prev, { type: 'text', role: 'assistant', content: `エラーが発生しました。\n${msg}` }])
+    },
+  })
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, agentMut.isPending])
+
+  const send = () => {
+    if (!input.trim() || agentMut.isPending) return
+    const text = input.trim()
+    setMessages(prev => [...prev, { type: 'text', role: 'user', content: text }])
+    historyRef.current = [...historyRef.current, { role: 'user', content: text }]
+    setInput('')
+    agentMut.mutate(historyRef.current)
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+        {messages.map((msg, i) => {
+          if (msg.type === 'tool-calls') {
+            return (
+              <div key={i} className="pl-9 pr-4 mb-2">
+                {msg.calls.map((c, j) => (
+                  <ToolCallCard key={j} tool={c.tool} input={c.input} result={c.result} />
+                ))}
+              </div>
+            )
+          }
+          return (
+            <div key={i} className={`flex mb-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center text-sm mr-2 flex-shrink-0 mt-0.5">🤖</div>
+              )}
+              <div className={`max-w-sm px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
+                msg.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-br-sm'
+                  : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          )
+        })}
+        {agentMut.isPending && (
+          <div className="flex items-start mb-3">
+            <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center text-sm mr-2 flex-shrink-0">🤖</div>
+            <div className="bg-white border border-gray-200 px-4 py-2.5 rounded-2xl rounded-bl-sm shadow-sm">
+              <span className="text-gray-400 text-sm flex items-center gap-1.5">
+                <svg className="animate-spin h-3 w-3 text-purple-400" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                処理中...
+              </span>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <div className="px-4 py-3 border-t border-gray-200 bg-white flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+          placeholder="例：SUS304を50枚入庫して"
+          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+        />
+        <button
+          onClick={send}
+          disabled={!input.trim() || agentMut.isPending}
+          className="bg-purple-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-purple-700 disabled:opacity-50"
+        >送信</button>
+      </div>
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────────────────────────
 
 export default function AIChatPage() {
@@ -434,12 +574,19 @@ export default function AIChatPage() {
           >
             状況確認
           </button>
+          <button
+            onClick={() => setMode('agent')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${mode === 'agent' ? 'bg-white shadow text-purple-700' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            エージェント
+          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
         {mode === 'order' && <OrderInputChat />}
         {mode === 'chat' && <StatusChat />}
+        {mode === 'agent' && <AgentChat />}
       </div>
     </div>
   )

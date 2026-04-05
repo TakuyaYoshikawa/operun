@@ -31,4 +31,7 @@ export const aiApi = {
 
   ganttSummary: () =>
     api.post<{ context: string }>('/ai/gantt-summary'),
+
+  agent: (messages: ChatMessage[]) =>
+    api.post<{ reply: string; tool_calls: { tool: string; input: Record<string, unknown>; result: unknown }[] }>('/ai/agent', { messages }),
 }

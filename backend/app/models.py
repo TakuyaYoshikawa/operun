@@ -76,6 +76,7 @@ class Machine(Base):
     daily_capacity_hours = Column(Float, default=8.0)
     setup_time_minutes = Column(Float, default=30.0)
     is_active = Column(Boolean, default=True)
+    machine_type = Column(String, nullable=True)               # 設備グループ名（例：旋盤・マシニング）
     # 外注フィールド（Phase 3）
     is_outsource = Column(Boolean, default=False)
     outsource_supplier = Column(String, nullable=True)         # 外注先名
@@ -83,7 +84,7 @@ class Machine(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     tenant = relationship("Tenant", back_populates="machines")
-    operations = relationship("Operation", back_populates="machine")
+    operations = relationship("Operation", back_populates="machine", foreign_keys="Operation.machine_id")
 
 
 class Process(Base):
@@ -138,6 +139,13 @@ class Operation(Base):
     duration_hours = Column(Float, nullable=False)
     is_urgent = Column(Boolean, default=False)
 
+    machine_locked = Column(Boolean, default=False)            # True=設備固定、False=同グループから自動選択
+
+    # 下書きスケジュール（確定前の一時保存）
+    draft_start      = Column(DateTime, nullable=True)
+    draft_end        = Column(DateTime, nullable=True)
+    draft_machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
+
     # 実績フィールド
     actual_start = Column(DateTime, nullable=True)
     actual_end = Column(DateTime, nullable=True)
@@ -153,7 +161,8 @@ class Operation(Base):
 
     tenant = relationship("Tenant")
     order = relationship("Order", back_populates="operations")
-    machine = relationship("Machine", back_populates="operations")
+    machine = relationship("Machine", back_populates="operations", foreign_keys=[machine_id])
+    process = relationship("Process")
     logs = relationship("OperationLog", back_populates="operation", cascade="all, delete-orphan")
 
 
@@ -174,6 +183,19 @@ class OperationLog(Base):
 
     tenant = relationship("Tenant")
     operation = relationship("Operation", back_populates="logs")
+
+
+class TenantSettings(Base):
+    """テナント全体の設定"""
+    __tablename__ = "tenant_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, unique=True, index=True)
+    work_start_hour = Column(Integer, default=8)       # 稼働開始時刻（時）
+    work_hours_per_day = Column(Float, default=8.0)    # 1日の稼働時間
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    tenant = relationship("Tenant")
 
 
 # ── Phase 3 ────────────────────────────────────────────────────────────────────

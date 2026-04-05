@@ -23,7 +23,7 @@ export default function MaterialsPage() {
   const [stockQty, setStockQty] = useState(1)
 
   const createMat = useMutation({ mutationFn: () => materialsApi.create({ ...matForm, supplier_name: matForm.supplier_name || undefined, note: matForm.note || undefined }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['materials'] }); resetMat() } })
-  const updateMat = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Material> }) => materialsApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['materials'] }); resetMat() } })
+  const updateMat = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Material> }) => materialsApi.update(id, data as Parameters<typeof materialsApi.update>[1]), onSuccess: () => { qc.invalidateQueries({ queryKey: ['materials'] }); resetMat() } })
   const deleteMat = useMutation({ mutationFn: materialsApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['materials'] }) })
   const stockMut = useMutation({
     mutationFn: () => stockAction?.type === 'receive'

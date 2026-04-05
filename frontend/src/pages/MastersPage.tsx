@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { machinesApi, processesApi } from '../api/machines'
 import type { Machine, Process } from '../api/machines'
@@ -8,7 +8,51 @@ import { calendarApi } from '../api/calendar'
 import type { CalendarHoliday } from '../api/calendar'
 import { productTemplatesApi } from '../api/productTemplates'
 import type { ProductTemplate, TemplateOperationIn } from '../api/productTemplates'
-type Tab = 'machines' | 'processes' | 'customers' | 'calendar' | 'templates'
+import { settingsApi } from '../api/settings'
+// ── 設備グループ オートコンプリート ───────────────────────────────────────────
+
+function MachineTypeInput({ value, onChange, existingTypes }: {
+  value: string
+  onChange: (v: string) => void
+  existingTypes: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const filtered = value.trim()
+    ? existingTypes.filter(t => t.toLowerCase().includes(value.toLowerCase()) && t !== value)
+    : existingTypes
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+        placeholder="旋盤"
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden text-sm">
+          {filtered.map(t => (
+            <li
+              key={t}
+              onMouseDown={() => { onChange(t); setOpen(false) }}
+              className="px-3 py-2 cursor-pointer hover:bg-blue-50 text-gray-700 flex items-center gap-2"
+            >
+              <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
+              {t}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+type Tab = 'machines' | 'processes' | 'customers' | 'calendar' | 'templates' | 'settings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'machines', label: '設備マスタ' },
@@ -16,6 +60,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'customers', label: '顧客マスタ' },
   { id: 'calendar', label: 'カレンダー' },
   { id: 'templates', label: '品番テンプレート' },
+  { id: 'settings', label: '稼働設定' },
 ]
 
 export default function MastersPage() {
@@ -27,12 +72,12 @@ export default function MastersPage() {
     queryKey: ['machines'],
     queryFn: () => machinesApi.list().then(r => r.data),
   })
-  const [mForm, setMForm] = useState({ name: '', code: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true })
+  const [mForm, setMForm] = useState({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true, is_outsource: false, outsource_supplier: null as string | null })
   const [mEditId, setMEditId] = useState<number | null>(null)
   const createM = useMutation({ mutationFn: machinesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const updateM = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Machine> }) => machinesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }) })
-  const resetM = () => { setMForm({ name: '', code: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true }); setMEditId(null) }
+  const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
 
   // ── 工程 ──────────────────────────────────────────────────────────────────
   const { data: processes } = useQuery({
@@ -54,7 +99,7 @@ export default function MastersPage() {
   const [cForm, setCForm] = useState({ code: '', name: '', contact_name: '', phone: '', email: '', note: '' })
   const [cEditId, setCEditId] = useState<number | null>(null)
   const createC = useMutation({ mutationFn: customersApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['customers'] }); resetC() } })
-  const updateC = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Customer> }) => customersApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['customers'] }); resetC() } })
+  const updateC = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Customer> }) => customersApi.update(id, data as Parameters<typeof customersApi.update>[1]), onSuccess: () => { qc.invalidateQueries({ queryKey: ['customers'] }); resetC() } })
   const deleteC = useMutation({ mutationFn: customersApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['customers'] }) })
   const resetC = () => { setCForm({ code: '', name: '', contact_name: '', phone: '', email: '', note: '' }); setCEditId(null) }
 
@@ -132,6 +177,17 @@ export default function MastersPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="旋盤1号機" />
             </div>
             <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                設備グループ
+                <span className="ml-1 text-gray-400 font-normal">（同グループの設備はスケジュール時に自動選択）</span>
+              </label>
+              <MachineTypeInput
+                value={mForm.machine_type}
+                onChange={v => setMForm(f => ({ ...f, machine_type: v }))}
+                existingTypes={[...new Set((machines ?? []).map(m => m.machine_type).filter(Boolean) as string[])]}
+              />
+            </div>
+            <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">1日稼働時間（時間）</label>
               <input type="number" min={1} max={24} step={0.5} value={mForm.daily_capacity_hours}
                 onChange={e => setMForm(f => ({ ...f, daily_capacity_hours: Number(e.target.value) }))}
@@ -157,6 +213,7 @@ export default function MastersPage() {
                 <tr>
                   <th className="px-4 py-3 text-left">コード</th>
                   <th className="px-4 py-3 text-left">設備名</th>
+                  <th className="px-4 py-3 text-left">グループ</th>
                   <th className="px-4 py-3 text-right">稼働時間</th>
                   <th className="px-4 py-3 text-right">段取り(分)</th>
                   <th className="px-4 py-3 text-center">状態</th>
@@ -171,6 +228,11 @@ export default function MastersPage() {
                   <tr key={m.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-gray-600">{m.code}</td>
                     <td className="px-4 py-3 font-medium text-gray-800">{m.name}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {m.machine_type
+                        ? <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">{m.machine_type}</span>
+                        : <span className="text-gray-300 text-xs">未設定</span>}
+                    </td>
                     <td className="px-4 py-3 text-right text-gray-600">{m.daily_capacity_hours}h</td>
                     <td className="px-4 py-3 text-right text-gray-600">{m.setup_time_minutes}</td>
                     <td className="px-4 py-3 text-center">
@@ -179,7 +241,7 @@ export default function MastersPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => { setMForm({ name: m.name, code: m.code, daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, is_active: m.is_active }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
+                      <button onClick={() => { setMForm({ name: m.name, code: m.code, machine_type: m.machine_type ?? '', daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, is_active: m.is_active, is_outsource: m.is_outsource, outsource_supplier: m.outsource_supplier }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
                       <button onClick={() => { if (confirm('削除しますか？')) deleteM.mutate(m.id) }} className="text-red-400 hover:text-red-600 text-xs">削除</button>
                     </td>
                   </tr>
@@ -530,6 +592,89 @@ export default function MastersPage() {
           </div>
         </div>
       )}
+
+      {/* 稼働設定 */}
+      {tab === 'settings' && <SettingsTab />}
+    </div>
+  )
+}
+
+function SettingsTab() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['tenant-settings'],
+    queryFn: () => settingsApi.get().then(r => r.data),
+  })
+  const [form, setForm] = useState<{ work_start_hour: number; work_hours_per_day: number } | null>(null)
+  const current = form ?? data
+
+  const mut = useMutation({
+    mutationFn: settingsApi.update,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tenant-settings'] }); setForm(null) },
+  })
+
+  if (isLoading || !current) return <div className="text-sm text-gray-400 py-8 text-center">読み込み中...</div>
+
+  const isDirty = form !== null
+
+  return (
+    <div className="max-w-md">
+      <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-5">
+        <h3 className="text-sm font-semibold text-gray-700">工場稼働時間</h3>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">稼働開始時刻</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={0} max={12}
+              value={current.work_start_hour}
+              onChange={e => setForm(f => ({ ...(f ?? current), work_start_hour: Number(e.target.value) }))}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+            <span className="text-sm text-gray-500">時</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">例：8 → 8:00開始</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">1日の稼働時間</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={1} max={24} step={0.5}
+              value={current.work_hours_per_day}
+              onChange={e => setForm(f => ({ ...(f ?? current), work_hours_per_day: Number(e.target.value) }))}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+            <span className="text-sm text-gray-500">時間</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            例：8 → {current.work_start_hour}:00〜{current.work_start_hour + current.work_hours_per_day}:00
+          </p>
+        </div>
+
+        <div className="pt-2 flex items-center gap-3">
+          <button
+            onClick={() => mut.mutate(current)}
+            disabled={!isDirty || mut.isPending}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            {mut.isPending ? '保存中...' : '保存'}
+          </button>
+          {isDirty && (
+            <button onClick={() => setForm(null)} className="text-sm text-gray-400 hover:text-gray-600">
+              リセット
+            </button>
+          )}
+          {mut.isSuccess && !isDirty && (
+            <span className="text-xs text-green-600">✓ 保存しました</span>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-gray-100 text-xs text-gray-400 space-y-1">
+          <p>※ この設定はスケジュール最適化時の稼働カレンダーに反映されます。</p>
+          <p>※ 設備ごとの稼働時間は「設備マスタ」で個別に上書きできます。</p>
+        </div>
+      </div>
     </div>
   )
 }

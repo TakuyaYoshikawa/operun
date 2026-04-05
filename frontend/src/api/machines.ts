@@ -4,9 +4,12 @@ export interface Machine {
   id: number
   name: string
   code: string
+  machine_type: string | null
   daily_capacity_hours: number
   setup_time_minutes: number
   is_active: boolean
+  is_outsource: boolean
+  outsource_supplier: string | null
   created_at: string
 }
 

@@ -16,9 +16,12 @@ router = APIRouter()
 class MachineBase(BaseModel):
     name: str = Field(..., description="設備名（例：旋盤1号機）")
     code: str = Field(..., description="設備コード（テナント内で一意）")
+    machine_type: Optional[str] = Field(None, description="設備グループ名（例：旋盤・マシニング）")
     daily_capacity_hours: float = Field(8.0, gt=0)
     setup_time_minutes: float = Field(30.0, ge=0)
     is_active: bool = True
+    is_outsource: bool = False
+    outsource_supplier: Optional[str] = None
 
 
 class MachineCreate(MachineBase):
@@ -27,9 +30,12 @@ class MachineCreate(MachineBase):
 
 class MachineUpdate(BaseModel):
     name: Optional[str] = None
+    machine_type: Optional[str] = None
     daily_capacity_hours: Optional[float] = Field(None, gt=0)
     setup_time_minutes: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None
+    is_outsource: Optional[bool] = None
+    outsource_supplier: Optional[str] = None
 
 
 class MachineOut(MachineBase):
