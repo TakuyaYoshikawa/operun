@@ -1,90 +1,174 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, date
+from pydantic import BaseModel
 
 from app.database import get_db
 from app import models
+from app.auth import get_current_tenant_id
 from app.scheduler.engine import (
     SchedulingEngine, OperationInput, MachineCalendar
 )
+from app.scheduler.ortools_engine import ORToolsSchedulingEngine
+
+
+class DraftEditIn(BaseModel):
+    draft_start: datetime
+    draft_end: datetime
+    draft_machine_id: Optional[int] = None
 
 router = APIRouter()
 
 
-def _build_engine(db: Session) -> SchedulingEngine:
-    """DBから設備情報を読み込んでエンジンを初期化"""
-    machines = db.query(models.Machine).filter(models.Machine.is_active == True).all()
-    calendars = {
+def _get_tenant_settings(db: Session, tenant_id: int):
+    """テナント設定を取得（未設定ならデフォルト）"""
+    s = db.query(models.TenantSettings).filter(
+        models.TenantSettings.tenant_id == tenant_id
+    ).first()
+    if not s:
+        return {"work_start_hour": 8, "work_hours_per_day": 8.0}
+    return {"work_start_hour": s.work_start_hour, "work_hours_per_day": s.work_hours_per_day}
+
+
+def _build_calendars(db: Session, tenant_id: int) -> dict:
+    """テナントの設備情報・カレンダー休日を読み込んでカレンダー辞書を生成"""
+    tenant_cfg = _get_tenant_settings(db, tenant_id)
+
+    machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == True,
+    ).all()
+
+    holidays = db.query(models.CalendarHoliday).filter(
+        models.CalendarHoliday.tenant_id == tenant_id,
+        models.CalendarHoliday.working_hours == 0,
+    ).all()
+    non_working_dates = [h.date for h in holidays]
+
+    return {
         m.id: MachineCalendar(
             machine_id=m.id,
-            daily_hours=m.daily_capacity_hours,
+            daily_hours=m.daily_capacity_hours or tenant_cfg["work_hours_per_day"],
+            work_start_hour=tenant_cfg["work_start_hour"],
+            non_working_days=non_working_dates,
         )
         for m in machines
     }
+
+
+def _build_engine(db: Session, tenant_id: int, optimizer: str = "ortools") -> SchedulingEngine:
+    """テナントの設備情報・カレンダー休日を読み込んでエンジンを初期化"""
+    calendars = _build_calendars(db, tenant_id)
+    if optimizer == "ortools":
+        return ORToolsSchedulingEngine(calendars)
     return SchedulingEngine(calendars)
 
 
-def _build_operation_inputs(db: Session) -> List[OperationInput]:
-    """DBから全受注工程を読み込んでOperationInputリストを生成"""
+def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]:
+    """テナントの受注工程を読み込んでOperationInputリストを生成。
+    machine_locked=False かつ同グループの設備が複数ある場合は allowed_machine_ids を設定する。"""
+
+    # 設備グループマップを構築: machine_type -> [machine_id, ...]
+    machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == True,
+        models.Machine.is_outsource == False,
+    ).all()
+    type_to_ids: dict[str, list[int]] = {}
+    for m in machines:
+        if m.machine_type:
+            type_to_ids.setdefault(m.machine_type, []).append(m.id)
+    machine_type_map: dict[int, str] = {m.id: m.machine_type for m in machines if m.machine_type}
+    # 設備ごとの段取り時間（時間単位）
+    setup_hours_map: dict[int, float] = {m.id: (m.setup_time_minutes or 0) / 60.0 for m in machines}
+
     ops = (
         db.query(models.Operation)
         .join(models.Order)
-        .filter(models.Order.status != "done")
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Order.status != "done",
+        )
         .order_by(models.Order.id, models.Operation.sequence)
         .all()
     )
-    return [
-        OperationInput(
+
+    result = []
+    for op in ops:
+        # グループ内の候補設備を決定
+        allowed: list[int] = []
+        locked = getattr(op, "machine_locked", False)
+        if not locked:
+            mtype = machine_type_map.get(op.machine_id)
+            if mtype and len(type_to_ids.get(mtype, [])) > 1:
+                allowed = type_to_ids[mtype]
+
+        # 段取り時間を加算（実加工時間 + 段取り時間）
+        setup_h = setup_hours_map.get(op.machine_id, 0.0)
+        total_hours = op.duration_hours + setup_h
+
+        result.append(OperationInput(
             order_id=op.order.id,
             order_number=op.order.order_number,
             product_name=op.order.product_name,
             sequence=op.sequence,
             machine_id=op.machine_id,
-            duration_hours=op.duration_hours,
+            duration_hours=total_hours,
             due_date=op.order.due_date,
             priority=op.order.priority,
             is_urgent=op.is_urgent,
-        )
-        for op in ops
-    ]
+            allowed_machine_ids=allowed,
+        ))
+    return result
 
 
-@router.post("/run")
-def run_schedule(db: Session = Depends(get_db)):
-    """
-    スケジューリングを実行してDBに計画日時を書き戻す。
-    受注登録・変更のたびに呼び出す。
-    """
-    engine = _build_engine(db)
-    op_inputs = _build_operation_inputs(db)
-
-    if not op_inputs:
-        return {"message": "スケジュールする受注がありません", "scheduled": 0}
-
-    results = engine.schedule(op_inputs)
-
-    # DBに計画日時を書き戻す
+def _write_results_to_ops(db: Session, tenant_id: int, results, draft: bool):
+    """スケジュール結果をDBに書き込む。draft=True なら下書きカラムへ。"""
     for result in results:
         ops = (
             db.query(models.Operation)
             .filter(
+                models.Operation.tenant_id == tenant_id,
                 models.Operation.order_id == result.order_id,
                 models.Operation.sequence == result.sequence,
-                models.Operation.machine_id == result.machine_id,
             )
             .all()
         )
         for op in ops:
-            op.planned_start = result.planned_start
-            op.planned_end = result.planned_end
-
+            if draft:
+                op.draft_start      = result.planned_start
+                op.draft_end        = result.planned_end
+                op.draft_machine_id = result.machine_id if not getattr(op, "machine_locked", False) else op.machine_id
+            else:
+                op.planned_start = result.planned_start
+                op.planned_end   = result.planned_end
+                if not getattr(op, "machine_locked", False):
+                    op.machine_id = result.machine_id
     db.commit()
+
+
+@router.post("/run")
+def run_schedule(
+    optimizer: str = "ortools",
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """スケジューリングを実行して下書きカラムに保存する（現行スケジュールは変更しない）。"""
+    engine = _build_engine(db, tenant_id, optimizer)
+    op_inputs = _build_operation_inputs(db, tenant_id)
+
+    if not op_inputs:
+        return {"message": "スケジュールする受注がありません", "scheduled": 0, "draft": True}
+
+    results = engine.schedule(op_inputs)
+    _write_results_to_ops(db, tenant_id, results, draft=True)
 
     delayed = [r for r in results if r.is_delayed]
     return {
         "scheduled": len(results),
         "delayed_count": len(delayed),
+        "draft": True,
         "delayed_orders": [
             {
                 "order_number": r.order_number,
@@ -98,38 +182,121 @@ def run_schedule(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/gantt")
-def get_gantt_data(db: Session = Depends(get_db)):
-    """
-    ガントチャート表示用データを返す。
-    Frappe Gantt / DHTMLX Gantt の形式に合わせて整形。
-    """
+@router.post("/commit")
+def commit_draft(
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """下書きスケジュールを現行スケジュールに確定する。"""
     ops = (
         db.query(models.Operation)
-        .join(models.Order)
-        .join(models.Machine)
-        .filter(models.Order.status != "done")
-        .filter(models.Operation.planned_start != None)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.draft_start != None,
+        )
         .all()
     )
+    if not ops:
+        raise HTTPException(status_code=404, detail="確定する下書きがありません")
+
+    for op in ops:
+        op.planned_start = op.draft_start
+        op.planned_end   = op.draft_end
+        if op.draft_machine_id and not getattr(op, "machine_locked", False):
+            op.machine_id = op.draft_machine_id
+        op.draft_start      = None
+        op.draft_end        = None
+        op.draft_machine_id = None
+
+    db.commit()
+    return {"committed": len(ops)}
+
+
+@router.post("/discard")
+def discard_draft(
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """下書きスケジュールを破棄する。"""
+    ops = (
+        db.query(models.Operation)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.draft_start != None,
+        )
+        .all()
+    )
+    for op in ops:
+        op.draft_start      = None
+        op.draft_end        = None
+        op.draft_machine_id = None
+    db.commit()
+    return {"discarded": len(ops)}
+
+
+@router.get("/gantt")
+def get_gantt_data(
+    draft: bool = False,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """ガントチャート表示用データを返す。draft=true で下書きを表示。"""
+    # 下書きモードでは draft_start があるものだけ対象
+    q = (
+        db.query(models.Operation)
+        .join(models.Order)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Order.status != "done",
+        )
+    )
+    if draft:
+        q = q.filter(models.Operation.draft_start != None)
+    else:
+        q = q.filter(models.Operation.planned_start != None)
+
+    ops = q.all()
+
+    # 下書きモードでは設備が変わっている可能性があるため machine を別途取得
+    machine_map = {
+        m.id: m for m in db.query(models.Machine).filter(
+            models.Machine.tenant_id == tenant_id
+        ).all()
+    }
+
+    # 下書きに含まれていない工程も現行として並べて比較できるよう has_draft を付与
+    has_draft = any(op.draft_start is not None for op in (
+        db.query(models.Operation).filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.draft_start != None,
+        ).limit(1).all()
+    ))
 
     tasks = []
     for op in ops:
-        due_dt = datetime(
-            op.order.due_date.year,
-            op.order.due_date.month,
-            op.order.due_date.day,
-            17, 0
-        )
-        is_delayed = op.planned_end and op.planned_end > due_dt
+        if draft:
+            start  = op.draft_start
+            end    = op.draft_end
+            mid    = op.draft_machine_id or op.machine_id
+        else:
+            start  = op.planned_start
+            end    = op.planned_end
+            mid    = op.machine_id
+
+        machine = machine_map.get(mid)
+        if not machine or not start or not end:
+            continue
+
+        due_dt = datetime(op.order.due_date.year, op.order.due_date.month, op.order.due_date.day, 17, 0)
+        is_delayed = end > due_dt
 
         tasks.append({
             "id": f"op-{op.id}",
             "text": f"{op.order.order_number} / {op.order.product_name}",
-            "start_date": op.planned_start.strftime("%Y-%m-%d %H:%M") if op.planned_start else None,
-            "end_date": op.planned_end.strftime("%Y-%m-%d %H:%M") if op.planned_end else None,
-            "resource": op.machine.name,
-            "machine_id": op.machine_id,
+            "start_date": start.strftime("%Y-%m-%d %H:%M"),
+            "end_date":   end.strftime("%Y-%m-%d %H:%M"),
+            "resource": machine.name,
+            "machine_id": mid,
             "order_id": op.order_id,
             "due_date": op.order.due_date.isoformat(),
             "priority": op.order.priority,
@@ -138,16 +305,64 @@ def get_gantt_data(db: Session = Depends(get_db)):
             "color": "#e53e3e" if is_delayed else ("#f6ad55" if op.is_urgent else "#4aab68"),
         })
 
-    return {"tasks": tasks, "total": len(tasks)}
+    return {"tasks": tasks, "total": len(tasks), "has_draft": has_draft}
+
+
+@router.post("/create-draft")
+def create_draft_from_current(
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """現行スケジュール（planned_start/end）をそのまま下書きカラムにコピーする。"""
+    ops = (
+        db.query(models.Operation)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.planned_start != None,
+        )
+        .all()
+    )
+    if not ops:
+        raise HTTPException(status_code=404, detail="コピー元のスケジュールがありません")
+
+    for op in ops:
+        op.draft_start      = op.planned_start
+        op.draft_end        = op.planned_end
+        op.draft_machine_id = op.machine_id
+    db.commit()
+    return {"created": len(ops)}
+
+
+@router.patch("/draft/{operation_id}")
+def update_draft_operation(
+    operation_id: int,
+    payload: DraftEditIn,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """下書き内の特定工程の日時・設備を更新する。"""
+    op = db.query(models.Operation).filter(
+        models.Operation.id == operation_id,
+        models.Operation.tenant_id == tenant_id,
+        models.Operation.draft_start != None,
+    ).first()
+    if not op:
+        raise HTTPException(status_code=404, detail="下書き工程が見つかりません")
+
+    op.draft_start      = payload.draft_start
+    op.draft_end        = payload.draft_end
+    if payload.draft_machine_id is not None:
+        op.draft_machine_id = payload.draft_machine_id
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/simulate")
-def simulate_new_order(payload: dict, db: Session = Depends(get_db)):
-    """
-    新規受注を差し込んだ場合の影響をシミュレーション。
-    納期シミュレーション機能（Phase 2）で使用。
-    """
-    from datetime import date as date_type
+def simulate_new_order(
+    payload: dict,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     try:
         new_op = OperationInput(
             order_id=-1,
@@ -156,15 +371,74 @@ def simulate_new_order(payload: dict, db: Session = Depends(get_db)):
             sequence=1,
             machine_id=payload["machine_id"],
             duration_hours=payload["duration_hours"],
-            due_date=date_type.fromisoformat(payload["due_date"]),
+            due_date=date.fromisoformat(payload["due_date"]),
             priority=payload.get("priority", 3),
             is_urgent=payload.get("is_urgent", False),
         )
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    engine = _build_engine(db)
-    existing = _build_operation_inputs(db)
+    engine = _build_engine(db, tenant_id)
+    existing = _build_operation_inputs(db, tenant_id)
+    return engine.simulate_insert(new_op, existing)
+
+
+def _calc_business_days(start: datetime, end: datetime) -> int:
+    if end is None or start is None:
+        return 0
+    count = 0
+    current = start.date()
+    end_date = end.date()
+    while current <= end_date:
+        if current.weekday() != 6:
+            count += 1
+        current = current.replace(day=current.day + 1) if current.day < 28 else \
+            (current.replace(month=current.month + 1, day=1) if current.month < 12 else
+             current.replace(year=current.year + 1, month=1, day=1))
+    return max(count - 1, 0)
+
+
+def _format_date_ja(dt: datetime) -> str:
+    WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
+    w = WEEKDAYS[dt.weekday()]
+    return f"{dt.year}年{dt.month}月{dt.day}日（{w}）"
+
+
+@router.post("/simulate/delivery")
+def check_delivery_date(
+    payload: dict,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """F-05 納期回答支援。"""
+    try:
+        new_op = OperationInput(
+            order_id=-1,
+            order_number="(試算)",
+            product_name=payload.get("product_name", "新規"),
+            sequence=1,
+            machine_id=payload["machine_id"],
+            duration_hours=payload["duration_hours"],
+            due_date=date.fromisoformat(payload["due_date"]),
+            priority=payload.get("priority", 3),
+            is_urgent=payload.get("is_urgent", False),
+        )
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    engine = _build_engine(db, tenant_id)
+    existing = _build_operation_inputs(db, tenant_id)
     result = engine.simulate_insert(new_op, existing)
 
-    return result
+    completion: datetime | None = result["new_order_completion"]
+    feasible = completion is not None
+
+    return {
+        "feasible": feasible,
+        "completion_date": _format_date_ja(completion) if completion else None,
+        "completion_datetime": completion.isoformat() if completion else None,
+        "business_days": _calc_business_days(datetime.now(), completion) if completion else None,
+        "on_time": result.get("new_order_delayed") is False if feasible else None,
+        "affected_orders": result["delayed_order_numbers"],
+        "affected_count": result["total_delayed_orders"],
+    }

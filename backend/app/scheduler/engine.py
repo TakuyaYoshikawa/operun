@@ -20,8 +20,9 @@ class OperationInput:
     machine_id: int
     duration_hours: float
     due_date: date
-    priority: int = 3          # 1=特急, 2=高, 3=通常
+    priority: int = 3                      # 1=特急, 2=高, 3=通常
     is_urgent: bool = False
+    allowed_machine_ids: List[int] = field(default_factory=list)  # グループ内の候補設備IDリスト
 
 
 @dataclass
@@ -129,21 +130,35 @@ class SchedulingEngine:
         order_prev_end: Dict[int, datetime] = {}
 
         for op in sorted_ops:
-            cal = self.calendars.get(op.machine_id)
-            if cal is None:
+            # 候補設備リストを決定（グループ指定がある場合はそちらを優先）
+            candidates = op.allowed_machine_ids if op.allowed_machine_ids else [op.machine_id]
+            candidates = [mid for mid in candidates if mid in self.calendars]
+            if not candidates:
                 continue
 
-            # 開始可能時刻 = max(設備の空き時刻, 前工程の終了時刻)
-            machine_free = self.machine_free_at[op.machine_id]
             prev_end = order_prev_end.get(op.order_id, datetime.now())
-            start_candidate = max(machine_free, prev_end)
 
-            planned_start = cal.next_available(start_candidate)
-            planned_end = cal.add_hours(planned_start, op.duration_hours)
+            # 候補の中で最も早く終わる設備を選ぶ
+            best_mid = candidates[0]
+            best_start = best_end = None
+            for mid in candidates:
+                cal = self.calendars[mid]
+                start_candidate = max(self.machine_free_at[mid], prev_end)
+                ps = cal.next_available(start_candidate)
+                pe = cal.add_hours(ps, op.duration_hours)
+                if best_end is None or pe < best_end:
+                    best_mid, best_start, best_end = mid, ps, pe
+
+            cal = self.calendars[best_mid]
+            planned_start = best_start
+            planned_end = best_end
 
             # 設備の空き時刻を更新
-            self.machine_free_at[op.machine_id] = planned_end
+            self.machine_free_at[best_mid] = planned_end
             order_prev_end[op.order_id] = planned_end
+
+            # machine_id を選ばれた設備で上書き（グループ割り当ての結果）
+            op.machine_id = best_mid
 
             # 納期チェック
             due_dt = datetime(op.due_date.year, op.due_date.month, op.due_date.day, 17, 0)
@@ -154,7 +169,7 @@ class SchedulingEngine:
                 order_id=op.order_id,
                 order_number=op.order_number,
                 product_name=op.product_name,
-                machine_id=op.machine_id,
+                machine_id=best_mid,
                 sequence=op.sequence,
                 planned_start=planned_start,
                 planned_end=planned_end,
