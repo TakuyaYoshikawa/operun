@@ -9,20 +9,39 @@ from app.auth import get_current_tenant_id
 from app.scheduler.engine import (
     SchedulingEngine, OperationInput, MachineCalendar
 )
+from app.scheduler.ortools_engine import ORToolsSchedulingEngine
 
 router = APIRouter()
 
 
-def _build_engine(db: Session, tenant_id: int) -> SchedulingEngine:
-    """テナントの設備情報を読み込んでエンジンを初期化"""
+def _build_calendars(db: Session, tenant_id: int) -> dict:
+    """テナントの設備情報・カレンダー休日を読み込んでカレンダー辞書を生成"""
     machines = db.query(models.Machine).filter(
         models.Machine.tenant_id == tenant_id,
         models.Machine.is_active == True,
     ).all()
-    calendars = {
-        m.id: MachineCalendar(machine_id=m.id, daily_hours=m.daily_capacity_hours)
+
+    holidays = db.query(models.CalendarHoliday).filter(
+        models.CalendarHoliday.tenant_id == tenant_id,
+        models.CalendarHoliday.working_hours == 0,
+    ).all()
+    non_working_dates = [h.date for h in holidays]
+
+    return {
+        m.id: MachineCalendar(
+            machine_id=m.id,
+            daily_hours=m.daily_capacity_hours,
+            non_working_days=non_working_dates,
+        )
         for m in machines
     }
+
+
+def _build_engine(db: Session, tenant_id: int, optimizer: str = "ortools") -> SchedulingEngine:
+    """テナントの設備情報・カレンダー休日を読み込んでエンジンを初期化"""
+    calendars = _build_calendars(db, tenant_id)
+    if optimizer == "ortools":
+        return ORToolsSchedulingEngine(calendars)
     return SchedulingEngine(calendars)
 
 
@@ -56,11 +75,12 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
 
 @router.post("/run")
 def run_schedule(
+    optimizer: str = "ortools",
     db: Session = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """スケジューリングを実行してDBに計画日時を書き戻す。"""
-    engine = _build_engine(db, tenant_id)
+    """スケジューリングを実行してDBに計画日時を書き戻す。optimizer: ortools | edd"""
+    engine = _build_engine(db, tenant_id, optimizer)
     op_inputs = _build_operation_inputs(db, tenant_id)
 
     if not op_inputs:

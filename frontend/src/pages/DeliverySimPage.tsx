@@ -25,7 +25,7 @@ export default function DeliverySimPage() {
     onSuccess: data => setResult(data.data),
   })
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setResult(null)
     sim.mutate({ ...form, machine_id: Number(form.machine_id) })

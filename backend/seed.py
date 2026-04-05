@@ -73,14 +73,50 @@ for p in processes_data:
 db.commit()
 print(f"  {len(processes)} 件登録")
 
-print("受注データを投入中...")
 today = date.today()
+
+print("顧客マスタを投入中...")
+customers_data = [
+    {"code": "C001", "name": "鈴木商事",     "contact_name": "鈴木一郎", "phone": "03-1234-5678", "email": "suzuki@example.com"},
+    {"code": "C002", "name": "田中製作所",   "contact_name": "田中花子", "phone": "06-9876-5432", "email": "tanaka@example.com"},
+    {"code": "C003", "name": "佐藤エンジニアリング", "contact_name": "佐藤次郎", "phone": "052-111-2222", "email": "sato@example.com"},
+]
+customers = {}
+for c in customers_data:
+    obj = models.Customer(**c, tenant_id=tenant.id)
+    db.add(obj)
+    db.flush()
+    customers[c["code"]] = obj
+db.commit()
+print(f"  {len(customers)} 件登録")
+
+print("カレンダー休日を投入中...")
+import jpholiday
+from datetime import timedelta as td
+year = today.year
+current = date(year, 1, 1)
+cal_count = 0
+while current <= date(year, 12, 31):
+    holiday_name = jpholiday.is_holiday_name(current)
+    if holiday_name:
+        db.add(models.CalendarHoliday(
+            tenant_id=tenant.id,
+            date=current,
+            holiday_name=holiday_name,
+            working_hours=0.0,
+        ))
+        cal_count += 1
+    current += td(days=1)
+db.commit()
+print(f"  {cal_count} 件の祝日を登録（{year}年）")
+
+print("受注データを投入中...")
 orders_data = [
     {
         "order_number": "ORD-001", "product_name": "シャフト部品A",
         "product_code": "SHA-001", "quantity": 50,
         "due_date": today + timedelta(days=5), "priority": 2, "status": "pending",
-        "note": "表面粗さ Ra1.6 指定",
+        "note": "表面粗さ Ra1.6 指定", "customer_code": "C001",
         "operations": [
             {"machine_code": "M01", "process_code": "P01", "sequence": 1, "duration_hours": 4.0},
             {"machine_code": "M05", "process_code": "P03", "sequence": 2, "duration_hours": 2.0},
@@ -90,7 +126,7 @@ orders_data = [
         "order_number": "ORD-002", "product_name": "フランジ部品B",
         "product_code": "FLG-002", "quantity": 20,
         "due_date": today + timedelta(days=8), "priority": 3, "status": "pending",
-        "note": None,
+        "note": None, "customer_code": "C002",
         "operations": [
             {"machine_code": "M03", "process_code": "P04", "sequence": 1, "duration_hours": 6.0},
             {"machine_code": "M05", "process_code": "P03", "sequence": 2, "duration_hours": 1.5},
@@ -100,7 +136,7 @@ orders_data = [
         "order_number": "ORD-003", "product_name": "ブラケット部品C",
         "product_code": "BKT-003", "quantity": 100,
         "due_date": today + timedelta(days=3), "priority": 1, "status": "in_progress",
-        "note": "特急対応・得意先優先",
+        "note": "特急対応・得意先優先", "customer_code": "C001",
         "operations": [
             {"machine_code": "M04", "process_code": "P02", "sequence": 1, "duration_hours": 3.0, "is_urgent": True},
         ],
@@ -109,7 +145,7 @@ orders_data = [
         "order_number": "ORD-004", "product_name": "カラー部品D",
         "product_code": "CLR-004", "quantity": 200,
         "due_date": today + timedelta(days=12), "priority": 3, "status": "pending",
-        "note": None,
+        "note": None, "customer_code": "C003",
         "operations": [
             {"machine_code": "M01", "process_code": "P01", "sequence": 1, "duration_hours": 5.0},
         ],
@@ -118,7 +154,7 @@ orders_data = [
         "order_number": "ORD-005", "product_name": "ピン部品E",
         "product_code": "PIN-005", "quantity": 500,
         "due_date": today + timedelta(days=7), "priority": 2, "status": "pending",
-        "note": "大量ロット・寸法公差 +-0.01",
+        "note": "大量ロット・寸法公差 +-0.01", "customer_code": "C002",
         "operations": [
             {"machine_code": "M02", "process_code": "P01", "sequence": 1, "duration_hours": 8.0},
             {"machine_code": "M05", "process_code": "P03", "sequence": 2, "duration_hours": 4.0},
@@ -128,7 +164,7 @@ orders_data = [
         "order_number": "ORD-006", "product_name": "ハウジング部品F",
         "product_code": "HOS-006", "quantity": 10,
         "due_date": today + timedelta(days=15), "priority": 3, "status": "pending",
-        "note": None,
+        "note": None, "customer_code": "C003",
         "operations": [
             {"machine_code": "M03", "process_code": "P04", "sequence": 1, "duration_hours": 10.0},
             {"machine_code": "M04", "process_code": "P02", "sequence": 2, "duration_hours": 3.0},
@@ -138,6 +174,7 @@ orders_data = [
 
 op_inputs = []
 for od in orders_data:
+    cust_code = od.get("customer_code")
     order = models.Order(
         tenant_id=tenant.id,
         order_number=od["order_number"],
@@ -148,6 +185,7 @@ for od in orders_data:
         priority=od["priority"],
         status=od["status"],
         note=od["note"],
+        customer_id=customers[cust_code].id if cust_code else None,
     )
     db.add(order)
     db.flush()

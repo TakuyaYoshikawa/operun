@@ -22,6 +22,11 @@ class OperationOut(BaseModel):
     is_urgent: bool
     planned_start: Optional[datetime]
     planned_end: Optional[datetime]
+    op_status: str
+    actual_start: Optional[datetime]
+    actual_end: Optional[datetime]
+    actual_hours: Optional[float]
+    worker: Optional[str]
 
     class Config:
         from_attributes = True
@@ -36,6 +41,7 @@ class OrderBase(BaseModel):
     priority: int = Field(3, ge=1, le=3)
     status: str = "pending"
     note: Optional[str] = None
+    customer_id: Optional[int] = None
 
 
 class OrderCreate(OrderBase):
@@ -50,6 +56,7 @@ class OrderUpdate(BaseModel):
     priority: Optional[int] = Field(None, ge=1, le=3)
     status: Optional[str] = None
     note: Optional[str] = None
+    customer_id: Optional[int] = None
 
 
 class OrderOut(OrderBase):
@@ -171,6 +178,8 @@ class OperationUpdate(BaseModel):
     process_id: Optional[int] = None
     duration_hours: Optional[float] = Field(None, gt=0)
     is_urgent: Optional[bool] = None
+    worker: Optional[str] = None
+    actual_note: Optional[str] = None
 
 
 def _get_order_or_404(order_id: int, tenant_id: int, db: Session) -> models.Order:
@@ -307,3 +316,158 @@ def delete_operation(
         r.sequence -= 1
 
     db.commit()
+
+
+# ── 実績ログ（OperationLog）────────────────────────────────────────────────────
+
+class OperationLogCreate(BaseModel):
+    status: str                          # not_started/in_progress/done/on_hold
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    actual_hours: Optional[float] = Field(None, gt=0)
+    worker: Optional[str] = None
+    note: Optional[str] = None
+
+
+class OperationLogOut(BaseModel):
+    id: int
+    operation_id: int
+    status: str
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+    actual_hours: Optional[float]
+    worker: Optional[str]
+    note: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+def _get_operation_or_404(order_id: int, op_id: int, tenant_id: int, db: Session) -> models.Operation:
+    op = db.query(models.Operation).filter(
+        models.Operation.id == op_id,
+        models.Operation.order_id == order_id,
+        models.Operation.tenant_id == tenant_id,
+    ).first()
+    if not op:
+        raise HTTPException(status_code=404, detail="工程が見つかりません")
+    return op
+
+
+@router.get("/{order_id}/operations/{op_id}/logs", response_model=List[OperationLogOut])
+def list_logs(
+    order_id: int,
+    op_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """工程の実績ログ一覧を返す。"""
+    _get_order_or_404(order_id, tenant_id, db)
+    _get_operation_or_404(order_id, op_id, tenant_id, db)
+    return (
+        db.query(models.OperationLog)
+        .filter(
+            models.OperationLog.operation_id == op_id,
+            models.OperationLog.tenant_id == tenant_id,
+        )
+        .order_by(models.OperationLog.created_at)
+        .all()
+    )
+
+
+@router.post("/{order_id}/operations/{op_id}/logs", response_model=OperationLogOut, status_code=201)
+def add_log(
+    order_id: int,
+    op_id: int,
+    payload: OperationLogCreate,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """実績ログを登録し、工程の op_status を更新する。"""
+    _get_order_or_404(order_id, tenant_id, db)
+    op = _get_operation_or_404(order_id, op_id, tenant_id, db)
+
+    log = models.OperationLog(
+        tenant_id=tenant_id,
+        operation_id=op_id,
+        **payload.model_dump(),
+    )
+    db.add(log)
+
+    # 工程の実績フィールドを最新ログで更新
+    op.op_status = payload.status
+    if payload.started_at and op.actual_start is None:
+        op.actual_start = payload.started_at
+    if payload.finished_at:
+        op.actual_end = payload.finished_at
+    if payload.actual_hours:
+        op.actual_hours = payload.actual_hours
+    if payload.worker:
+        op.worker = payload.worker
+
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@router.post("/{order_id}/operations/{op_id}/start", response_model=OperationLogOut)
+def start_operation(
+    order_id: int,
+    op_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """工程の作業を開始する（started_at を現在時刻でセット）。"""
+    _get_order_or_404(order_id, tenant_id, db)
+    op = _get_operation_or_404(order_id, op_id, tenant_id, db)
+
+    now = datetime.now().replace(microsecond=0)
+    log = models.OperationLog(
+        tenant_id=tenant_id,
+        operation_id=op_id,
+        status="in_progress",
+        started_at=now,
+    )
+    db.add(log)
+    op.op_status = "in_progress"
+    if op.actual_start is None:
+        op.actual_start = now
+
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@router.post("/{order_id}/operations/{op_id}/finish", response_model=OperationLogOut)
+def finish_operation(
+    order_id: int,
+    op_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """工程の作業を完了する（finished_at・actual_hours を自動計算）。"""
+    _get_order_or_404(order_id, tenant_id, db)
+    op = _get_operation_or_404(order_id, op_id, tenant_id, db)
+
+    now = datetime.now().replace(microsecond=0)
+    actual_hours = None
+    if op.actual_start:
+        actual_hours = round((now - op.actual_start).total_seconds() / 3600, 2)
+
+    log = models.OperationLog(
+        tenant_id=tenant_id,
+        operation_id=op_id,
+        status="done",
+        started_at=op.actual_start,
+        finished_at=now,
+        actual_hours=actual_hours,
+    )
+    db.add(log)
+    op.op_status = "done"
+    op.actual_end = now
+    op.actual_hours = actual_hours
+
+    db.commit()
+    db.refresh(log)
+    return log

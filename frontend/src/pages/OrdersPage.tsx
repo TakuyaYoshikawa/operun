@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi } from '../api/orders'
 import { machinesApi } from '../api/machines'
 import { processesApi } from '../api/machines'
+import { customersApi } from '../api/customers'
 import type { OrderCreate, Order, OrderStatus, Operation, OperationCreate } from '../api/orders'
 
 const PRIORITY_LABEL: Record<number, string> = { 1: '特急', 2: '高', 3: '通常' }
@@ -19,7 +20,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const emptyForm: OrderCreate = {
   order_number: '', product_name: '', product_code: '',
-  quantity: 1, due_date: '', priority: 3, status: 'pending', note: '',
+  quantity: 1, due_date: '', priority: 3, status: 'pending', note: '', customer_id: null,
 }
 
 const emptyOpForm: OperationCreate = {
@@ -55,6 +56,14 @@ function OperationsEditor({ order }: { order: Order }) {
   })
   const deleteMut = useMutation({
     mutationFn: (opId: number) => ordersApi.operations.delete(order.id, opId),
+    onSuccess: invalidate,
+  })
+  const startMut = useMutation({
+    mutationFn: (opId: number) => ordersApi.operations.start(order.id, opId),
+    onSuccess: invalidate,
+  })
+  const finishMut = useMutation({
+    mutationFn: (opId: number) => ordersApi.operations.finish(order.id, opId),
     onSuccess: invalidate,
   })
 
@@ -119,6 +128,30 @@ function OperationsEditor({ order }: { order: Order }) {
                 <span className="text-xs text-gray-400">
                   {op.planned_start.slice(0, 10)}〜{op.planned_end?.slice(0, 10)}
                 </span>
+              )}
+              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                op.op_status === 'done' ? 'bg-green-100 text-green-700' :
+                op.op_status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                'bg-gray-100 text-gray-500'
+              }`}>
+                {op.op_status === 'done' ? '完了' : op.op_status === 'in_progress' ? '作業中' : '未着手'}
+              </span>
+              {op.op_status === 'not_started' && (
+                <button
+                  onClick={() => startMut.mutate(op.id)}
+                  disabled={startMut.isPending}
+                  className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded hover:bg-blue-600 disabled:opacity-50"
+                >開始</button>
+              )}
+              {op.op_status === 'in_progress' && (
+                <button
+                  onClick={() => finishMut.mutate(op.id)}
+                  disabled={finishMut.isPending}
+                  className="text-xs bg-green-500 text-white px-2 py-0.5 rounded hover:bg-green-600 disabled:opacity-50"
+                >完了</button>
+              )}
+              {op.actual_hours && (
+                <span className="text-xs text-gray-400">実績 {op.actual_hours}h</span>
               )}
               <button
                 onClick={() => startEdit(op)}
@@ -209,6 +242,10 @@ export default function OrdersPage() {
     queryKey: ['orders'],
     queryFn: () => ordersApi.list().then(r => r.data),
   })
+  const { data: customers } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => customersApi.list().then(r => r.data),
+  })
 
   const createMut = useMutation({
     mutationFn: ordersApi.create,
@@ -235,7 +272,7 @@ export default function OrdersPage() {
       order_number: o.order_number, product_name: o.product_name,
       product_code: o.product_code, quantity: o.quantity,
       due_date: o.due_date, priority: o.priority,
-      status: o.status, note: o.note ?? '',
+      status: o.status, note: o.note ?? '', customer_id: o.customer_id ?? null,
     })
     setEditId(o.id)
     setShowForm(true)
@@ -337,6 +374,19 @@ export default function OrdersPage() {
                 <option value="pending">未着手</option>
                 <option value="in_progress">進行中</option>
                 <option value="done">完了</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">顧客</label>
+              <select
+                value={form.customer_id ?? ''}
+                onChange={e => setForm(f => ({ ...f, customer_id: e.target.value ? Number(e.target.value) : null }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">未選択</option>
+                {customers?.items?.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
               </select>
             </div>
             <div>

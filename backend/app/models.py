@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -34,6 +34,37 @@ class User(Base):
     tenant = relationship("Tenant", back_populates="users")
 
 
+class Customer(Base):
+    """顧客マスタ"""
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    code = Column(String, nullable=False)                     # テナント内で一意（例：C001）
+    name = Column(String, nullable=False)                     # 会社名
+    contact_name = Column(String, nullable=True)              # 担当者名
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    orders = relationship("Order", back_populates="customer")
+
+
+class CalendarHoliday(Base):
+    """工場カレンダー（休日・特別稼働日）"""
+    __tablename__ = "calendar_holidays"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False)
+    holiday_name = Column(String, nullable=True)              # 例：お盆休み
+    working_hours = Column(Float, default=0.0)                # 0=全休 / 4=半日 / 8=通常
+
+    tenant = relationship("Tenant")
+
+
 class Machine(Base):
     """設備マスタ"""
     __tablename__ = "machines"
@@ -45,6 +76,10 @@ class Machine(Base):
     daily_capacity_hours = Column(Float, default=8.0)
     setup_time_minutes = Column(Float, default=30.0)
     is_active = Column(Boolean, default=True)
+    # 外注フィールド（Phase 3）
+    is_outsource = Column(Boolean, default=False)
+    outsource_supplier = Column(String, nullable=True)         # 外注先名
+    outsource_lead_days = Column(Integer, default=0)           # 標準リードタイム
     created_at = Column(DateTime, server_default=func.now())
 
     tenant = relationship("Tenant", back_populates="machines")
@@ -71,6 +106,7 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     order_number = Column(String, nullable=False)            # テナント内で一意
     product_name = Column(String, nullable=False)
     product_code = Column(String, nullable=False)
@@ -82,6 +118,7 @@ class Order(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     tenant = relationship("Tenant", back_populates="orders")
+    customer = relationship("Customer", back_populates="orders")
     operations = relationship("Operation", back_populates="order",
                               cascade="all, delete-orphan")
 
@@ -101,6 +138,110 @@ class Operation(Base):
     duration_hours = Column(Float, nullable=False)
     is_urgent = Column(Boolean, default=False)
 
+    # 実績フィールド
+    actual_start = Column(DateTime, nullable=True)
+    actual_end = Column(DateTime, nullable=True)
+    actual_hours = Column(Float, nullable=True)
+    worker = Column(String, nullable=True)
+    op_status = Column(String, default="not_started")        # not_started/in_progress/done/on_hold
+    actual_note = Column(Text, nullable=True)
+    # 外注フィールド（Phase 3）
+    outsource_order_date = Column(Date, nullable=True)
+    outsource_return_date = Column(Date, nullable=True)
+    outsource_cost = Column(Float, nullable=True)
+    outsource_status = Column(String, nullable=True)         # ordered/returned/cancelled
+
     tenant = relationship("Tenant")
     order = relationship("Order", back_populates="operations")
     machine = relationship("Machine", back_populates="operations")
+    logs = relationship("OperationLog", back_populates="operation", cascade="all, delete-orphan")
+
+
+class OperationLog(Base):
+    """工程実績ログ"""
+    __tablename__ = "operation_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    operation_id = Column(Integer, ForeignKey("operations.id"), nullable=False)
+    status = Column(String, nullable=False)                  # not_started/in_progress/done/on_hold
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    actual_hours = Column(Float, nullable=True)
+    worker = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    operation = relationship("Operation", back_populates="logs")
+
+
+# ── Phase 3 ────────────────────────────────────────────────────────────────────
+
+class ProductTemplate(Base):
+    """品番テンプレート（簡易BOM）"""
+    __tablename__ = "product_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    product_code = Column(String, nullable=False)              # 品番（例：ABC-001）
+    product_name = Column(String, nullable=False)              # 品名
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    template_operations = relationship("TemplateOperation", back_populates="template",
+                                       cascade="all, delete-orphan", order_by="TemplateOperation.sequence")
+
+
+class TemplateOperation(Base):
+    """品番テンプレートの標準工程"""
+    __tablename__ = "template_operations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("product_templates.id"), nullable=False)
+    sequence = Column(Integer, nullable=False)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=True)
+    hours_per_unit = Column(Float, nullable=False)             # 単位あたり加工時間
+
+    template = relationship("ProductTemplate", back_populates="template_operations")
+    machine = relationship("Machine")
+    process = relationship("Process")
+
+
+class Material(Base):
+    """材料マスタ"""
+    __tablename__ = "materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    material_code = Column(String, nullable=False)             # 材料コード（例：MAT-001）
+    material_name = Column(String, nullable=False)             # 材料名
+    unit = Column(String, nullable=False, default="個")        # kg / m / 本 / 枚 / 個
+    stock_quantity = Column(Float, default=0.0)
+    reorder_point = Column(Float, default=0.0)                 # 発注点
+    unit_price = Column(Float, default=0.0)                    # 単価（円）
+    supplier_name = Column(String, nullable=True)
+    lead_days = Column(Integer, default=0)                     # 調達リードタイム
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    stock_logs = relationship("MaterialStockLog", back_populates="material", cascade="all, delete-orphan")
+
+
+class MaterialStockLog(Base):
+    """材料入出庫ログ"""
+    __tablename__ = "material_stock_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    action = Column(String, nullable=False)                    # receive / issue / adjust
+    quantity = Column(Float, nullable=False)                   # 正=入庫/増加、負=出庫/減少
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    material = relationship("Material", back_populates="stock_logs")
