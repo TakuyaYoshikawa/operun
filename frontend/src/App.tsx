@@ -7,19 +7,21 @@ import MastersPage from './pages/MastersPage'
 import GanttPage from './pages/GanttPage'
 import DeliverySimPage from './pages/DeliverySimPage'
 import AIChatPage from './pages/AIChatPage'
+import MaterialsPage from './pages/MaterialsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 })
 
-type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'ai'
+type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'ai' | 'materials'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
-  { id: 'gantt',    label: 'ガントチャート',      icon: '📊' },
-  { id: 'orders',   label: '受注管理',            icon: '📋' },
-  { id: 'masters',  label: 'マスタ管理',          icon: '⚙️' },
-  { id: 'delivery', label: '納期シミュレーター',  icon: '🔍' },
-  { id: 'ai',       label: 'AIアシスタント',      icon: '🤖' },
+  { id: 'gantt',     label: 'ガントチャート',      icon: '📊' },
+  { id: 'orders',    label: '受注管理',            icon: '📋' },
+  { id: 'materials', label: '材料在庫',            icon: '📦' },
+  { id: 'masters',   label: 'マスタ管理',          icon: '⚙️' },
+  { id: 'delivery',  label: '納期シミュレーター',  icon: '🔍' },
+  { id: 'ai',        label: 'AIアシスタント',      icon: '🤖' },
 ]
 
 function Layout({ page, setPage, onLogout }: {
@@ -64,8 +66,9 @@ function Layout({ page, setPage, onLogout }: {
         {page === 'gantt'    && <GanttPage />}
         {page === 'orders'   && <OrdersPage />}
         {page === 'masters'  && <MastersPage />}
-        {page === 'delivery' && <DeliverySimPage />}
-        {page === 'ai'       && <AIChatPage />}
+        {page === 'delivery'  && <DeliverySimPage />}
+        {page === 'ai'        && <AIChatPage />}
+        {page === 'materials' && <MaterialsPage />}
       </main>
     </div>
   )
