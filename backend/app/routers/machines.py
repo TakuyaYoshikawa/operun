@@ -153,6 +153,17 @@ def delete_machine(
     ).first()
     if not machine:
         raise HTTPException(status_code=404, detail="設備が見つかりません")
+    # 使用中チェック（工程実績・スケジュール）
+    in_use = db.query(models.Operation).filter(
+        models.Operation.machine_id == machine_id,
+        models.Operation.tenant_id == tenant_id,
+    ).first()
+    if in_use:
+        raise HTTPException(
+            status_code=400,
+            detail=f"設備「{machine.name}」は工程に使用されているため削除できません。"
+                   "先に関連する受注・工程を削除するか、設備を「稼働停止」に変更してください。"
+        )
     db.delete(machine)
     db.commit()
 
@@ -236,5 +247,15 @@ def delete_process(
     ).first()
     if not process:
         raise HTTPException(status_code=404, detail="工程が見つかりません")
+    # 使用中チェック
+    in_use = db.query(models.Operation).filter(
+        models.Operation.process_id == process_id,
+        models.Operation.tenant_id == tenant_id,
+    ).first()
+    if in_use:
+        raise HTTPException(
+            status_code=400,
+            detail=f"工程「{process.name}」は工程実績に使用されているため削除できません。"
+        )
     db.delete(process)
     db.commit()

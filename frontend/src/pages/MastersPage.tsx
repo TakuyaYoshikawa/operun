@@ -63,6 +63,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'settings', label: '稼働設定' },
 ]
 
+function getApiError(err: unknown): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const res = (err as { response?: { data?: { detail?: string } } }).response
+    if (res?.data?.detail) return res.data.detail
+  }
+  return '削除に失敗しました'
+}
+
 export default function MastersPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('machines')
@@ -76,7 +84,7 @@ export default function MastersPage() {
   const [mEditId, setMEditId] = useState<number | null>(null)
   const createM = useMutation({ mutationFn: machinesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const updateM = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Machine> }) => machinesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
-  const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }) })
+  const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }), onError: (err) => alert(getApiError(err)) })
   const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
 
   // ── 工程 ──────────────────────────────────────────────────────────────────
@@ -88,7 +96,7 @@ export default function MastersPage() {
   const [pEditId, setPEditId] = useState<number | null>(null)
   const createP = useMutation({ mutationFn: processesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['processes'] }); resetP() } })
   const updateP = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Process> }) => processesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['processes'] }); resetP() } })
-  const deleteP = useMutation({ mutationFn: processesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['processes'] }) })
+  const deleteP = useMutation({ mutationFn: processesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['processes'] }), onError: (err) => alert(getApiError(err)) })
   const resetP = () => { setPForm({ name: '', code: '', standard_time_per_unit: 10 }); setPEditId(null) }
 
   // ── 顧客 ──────────────────────────────────────────────────────────────────
@@ -100,7 +108,7 @@ export default function MastersPage() {
   const [cEditId, setCEditId] = useState<number | null>(null)
   const createC = useMutation({ mutationFn: customersApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['customers'] }); resetC() } })
   const updateC = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Customer> }) => customersApi.update(id, data as Parameters<typeof customersApi.update>[1]), onSuccess: () => { qc.invalidateQueries({ queryKey: ['customers'] }); resetC() } })
-  const deleteC = useMutation({ mutationFn: customersApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['customers'] }) })
+  const deleteC = useMutation({ mutationFn: customersApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['customers'] }), onError: (err) => alert(getApiError(err)) })
   const resetC = () => { setCForm({ code: '', name: '', contact_name: '', phone: '', email: '', note: '' }); setCEditId(null) }
 
   // ── 品番テンプレート ────────────────────────────────────────────────────────

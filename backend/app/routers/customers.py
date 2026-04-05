@@ -129,6 +129,17 @@ def delete_customer(
     ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="顧客が見つかりません")
+    # 受注が紐づいている場合は削除不可
+    in_use = db.query(models.Order).filter(
+        models.Order.customer_id == customer_id,
+        models.Order.tenant_id == tenant_id,
+    ).first()
+    if in_use:
+        raise HTTPException(
+            status_code=400,
+            detail=f"顧客「{customer.name}」には受注が登録されているため削除できません。"
+                   "先に関連する受注を削除してください。"
+        )
     db.delete(customer)
     db.commit()
 
