@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+// 本番（Vercel）では VITE_API_URL=https://your-app.render.com に設定する
+// 開発時は Vite のプロキシ経由で /api → localhost:8000 に転送される
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api',
   headers: { 'Content-Type': 'application/json' },
 })
 

@@ -1,35 +1,47 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 load_dotenv()
 from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings
-from app.database import engine, Base
+from app.database import engine, Base, DATABASE_URL
 
 Base.metadata.create_all(bind=engine)
 
-# SQLite 用カラム追加マイグレーション（Alembic 未導入のため手動）
-from sqlalchemy import text, inspect as sa_inspect
-def _add_column_if_missing(table: str, column: str, col_def: str):
-    with engine.connect() as conn:
-        cols = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
-        if column not in cols:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
-            conn.commit()
+# SQLite 用カラム追加マイグレーション（既存DBへの後付けカラム追加）
+# PostgreSQL（本番）では create_all が全カラムを正しく作成するためスキップ
+if "sqlite" in DATABASE_URL:
+    from sqlalchemy import text, inspect as sa_inspect
 
-_add_column_if_missing("machines",   "machine_type",        "TEXT")
-_add_column_if_missing("machines",   "is_outsource",        "BOOLEAN DEFAULT 0")
-_add_column_if_missing("machines",   "outsource_supplier",  "TEXT")
-_add_column_if_missing("machines",   "outsource_lead_days", "INTEGER DEFAULT 0")
-_add_column_if_missing("operations", "machine_locked",      "BOOLEAN DEFAULT 0")
-_add_column_if_missing("operations", "draft_start",         "DATETIME")
-_add_column_if_missing("operations", "draft_end",           "DATETIME")
-_add_column_if_missing("operations", "draft_machine_id",    "INTEGER")
+    def _add_column_if_missing(table: str, column: str, col_def: str):
+        inspector = sa_inspect(engine)
+        try:
+            cols = [col["name"] for col in inspector.get_columns(table)]
+        except Exception:
+            return  # テーブル未作成の場合は create_all に任せる
+        if column not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+                conn.commit()
+
+    _add_column_if_missing("machines",   "machine_type",        "TEXT")
+    _add_column_if_missing("machines",   "is_outsource",        "BOOLEAN DEFAULT 0")
+    _add_column_if_missing("machines",   "outsource_supplier",  "TEXT")
+    _add_column_if_missing("machines",   "outsource_lead_days", "INTEGER DEFAULT 0")
+    _add_column_if_missing("operations", "machine_locked",      "BOOLEAN DEFAULT 0")
+    _add_column_if_missing("operations", "draft_start",         "DATETIME")
+    _add_column_if_missing("operations", "draft_end",           "DATETIME")
+    _add_column_if_missing("operations", "draft_machine_id",    "INTEGER")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 
+# CORS：本番では ALLOWED_ORIGINS 環境変数にカンマ区切りでURLを指定
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
