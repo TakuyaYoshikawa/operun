@@ -2,19 +2,18 @@ services:
   - type: web
     name: operun-api
     env: python
-    region: singapore  # 日本に最も近いリージョン
+    region: singapore
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
-        sync: false  # Render ダッシュボードで手動設定
+        sync: false
       - key: SECRET_KEY
-        sync: false  # Render ダッシュボードで手動設定
+        sync: false
       - key: ANTHROPIC_API_KEY
-        sync: false  # Render ダッシュボードで手動設定
+        sync: false
       - key: ALLOWED_ORIGINS
-        sync: false  # 例: https://operun.vercel.app
+        sync: false
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "480"
