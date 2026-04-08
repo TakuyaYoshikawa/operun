@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { machinesApi } from '../api/machines'
 import { scheduleApi } from '../api/schedule'
 import type { DeliverySimResult } from '../api/schedule'
+import { aiApi } from '../api/ai'
 
 export default function DeliverySimPage() {
   const { data: machines } = useQuery({
@@ -19,10 +20,17 @@ export default function DeliverySimPage() {
     is_urgent: false,
   })
   const [result, setResult] = useState<DeliverySimResult | null>(null)
+  const [explanation, setExplanation] = useState<string | null>(null)
 
   const sim = useMutation({
     mutationFn: scheduleApi.simulateDelivery,
-    onSuccess: data => setResult(data.data),
+    onSuccess: data => { setResult(data.data); setExplanation(null) },
+  })
+
+  const explain = useMutation({
+    mutationFn: (r: DeliverySimResult) =>
+      aiApi.explainSimulation(r as unknown as Record<string, unknown>),
+    onSuccess: data => setExplanation(data.data.message),
   })
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -144,6 +152,32 @@ export default function DeliverySimPage() {
           {result.affected_count === 0 && result.feasible && (
             <p className="text-sm text-green-700 mt-2">既存受注への影響はありません</p>
           )}
+
+          {/* AI説明文生成 */}
+          <div className="border-t border-gray-200 pt-3 mt-4">
+            <button
+              onClick={() => explain.mutate(result)}
+              disabled={explain.isPending}
+              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors"
+            >
+              <span>🤖</span>
+              <span>{explain.isPending ? '生成中...' : 'お客様向け説明文を生成'}</span>
+            </button>
+            {explanation && (
+              <div className="mt-3 bg-white border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="text-xs font-semibold text-blue-600">AI 説明文（電話・メール用）</span>
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{explanation}</p>
+                <button
+                  onClick={() => navigator.clipboard.writeText(explanation)}
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  📋 コピー
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
