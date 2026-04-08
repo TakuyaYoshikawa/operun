@@ -7,8 +7,6 @@ import OrdersPage from './pages/OrdersPage'
 import MastersPage from './pages/MastersPage'
 import GanttPage from './pages/GanttPage'
 import DeliverySimPage from './pages/DeliverySimPage'
-import AIChatPage from './pages/AIChatPage'
-import MaterialsPage from './pages/MaterialsPage'
 import WorkPage from './pages/WorkPage'
 
 const queryClient = new QueryClient({
@@ -18,24 +16,22 @@ const queryClient = new QueryClient({
   },
 })
 
-type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'ai' | 'materials' | 'work'
+type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'work'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
-  { id: 'gantt',     label: 'ガントチャート',     icon: '📊' },
-  { id: 'work',      label: '工程実績',           icon: '🔧' },
-  { id: 'orders',    label: '受注管理',           icon: '📋' },
-  { id: 'materials', label: '材料在庫',           icon: '📦' },
-  { id: 'delivery',  label: '納期シミュレーター', icon: '🔍' },
-  { id: 'ai',        label: 'AIアシスタント',     icon: '🤖' },
+  { id: 'gantt',    label: 'ガントチャート',     icon: '📊' },
+  { id: 'work',     label: '工程実績',           icon: '🔧' },
+  { id: 'orders',   label: '受注管理',           icon: '📋' },
+  { id: 'delivery', label: '納期シミュレーター', icon: '🔍' },
 ]
 
 // 設定メニュー（サイドバー下部・ドロワー内に分離）
 const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
-  { id: 'masters',   label: 'マスタ管理',         icon: '⚙️' },
+  { id: 'masters', label: 'マスタ管理', icon: '⚙️' },
 ]
 
 // モバイル下部ナビに表示する項目
-const BOTTOM_NAV: Page[] = ['work', 'gantt', 'orders', 'materials', 'ai']
+const BOTTOM_NAV: Page[] = ['gantt', 'work', 'orders', 'delivery']
 
 function PageContent({ page }: { page: Page }) {
   return (
@@ -44,8 +40,6 @@ function PageContent({ page }: { page: Page }) {
       {page === 'orders'   && <OrdersPage />}
       {page === 'masters'  && <MastersPage />}
       {page === 'delivery' && <DeliverySimPage />}
-      {page === 'ai'       && <AIChatPage />}
-      {page === 'materials'&& <MaterialsPage />}
       {page === 'work'     && <WorkPage />}
     </>
   )
