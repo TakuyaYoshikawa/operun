@@ -78,14 +78,34 @@ class Machine(Base):
     is_active = Column(Boolean, default=True)
     machine_type = Column(String, nullable=True)               # 設備グループ名（例：旋盤・マシニング）
     batch_capacity = Column(Integer, default=1)                 # 同時処理可能数（炉・焼入れ等）
+    work_start_hour = Column(Integer, nullable=True)            # 稼働開始時刻（テナント設定を上書き）
     # 外注フィールド（Phase 3）
     is_outsource = Column(Boolean, default=False)
     outsource_supplier = Column(String, nullable=True)         # 外注先名
     outsource_lead_days = Column(Integer, default=0)           # 標準リードタイム
     created_at = Column(DateTime, server_default=func.now())
 
+    maintenance_windows = relationship("MachineMaintenance", back_populates="machine",
+                                       cascade="all, delete-orphan")
+
     tenant = relationship("Tenant", back_populates="machines")
     operations = relationship("Operation", back_populates="machine", foreign_keys="Operation.machine_id")
+
+
+class MachineMaintenance(Base):
+    """設備メンテナンス枠（定期点検・修理等）"""
+    __tablename__ = "machine_maintenance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False, index=True)
+    start_datetime = Column(DateTime, nullable=False)
+    end_datetime = Column(DateTime, nullable=False)
+    reason = Column(String, nullable=True)                      # 定期点検・修理・清掃等
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+    machine = relationship("Machine", back_populates="maintenance_windows")
 
 
 class Process(Base):
@@ -140,6 +160,7 @@ class Operation(Base):
     duration_hours = Column(Float, nullable=False)
     is_urgent = Column(Boolean, default=False)
     wait_hours_after = Column(Float, default=0.0)               # 次工程までの待機時間（冷却・乾燥等）
+    not_before_date = Column(Date, nullable=True)               # 開始不可日（材料入荷待ち等）
 
     machine_locked = Column(Boolean, default=False)            # True=設備固定、False=同グループから自動選択
 

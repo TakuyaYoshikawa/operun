@@ -19,6 +19,8 @@ class MachineBase(BaseModel):
     machine_type: Optional[str] = Field(None, description="設備グループ名（例：旋盤・マシニング）")
     daily_capacity_hours: float = Field(8.0, gt=0)
     setup_time_minutes: float = Field(30.0, ge=0)
+    batch_capacity: int = Field(1, ge=1, description="同時処理可能数（炉・焼入れ等）")
+    work_start_hour: Optional[int] = Field(None, ge=0, le=23, description="稼働開始時刻（未設定=テナント設定を使用）")
     is_active: bool = True
     is_outsource: bool = False
     outsource_supplier: Optional[str] = None
@@ -33,6 +35,8 @@ class MachineUpdate(BaseModel):
     machine_type: Optional[str] = None
     daily_capacity_hours: Optional[float] = Field(None, gt=0)
     setup_time_minutes: Optional[float] = Field(None, ge=0)
+    batch_capacity: Optional[int] = Field(None, ge=1)
+    work_start_hour: Optional[int] = Field(None, ge=0, le=23)
     is_active: Optional[bool] = None
     is_outsource: Optional[bool] = None
     outsource_supplier: Optional[str] = None
@@ -40,6 +44,26 @@ class MachineUpdate(BaseModel):
 
 class MachineOut(MachineBase):
     id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── メンテナンス枠 Pydantic スキーマ ─────────────────────────────────────────────
+
+class MaintenanceCreate(BaseModel):
+    start_datetime: datetime
+    end_datetime: datetime
+    reason: Optional[str] = None
+
+
+class MaintenanceOut(BaseModel):
+    id: int
+    machine_id: int
+    start_datetime: datetime
+    end_datetime: datetime
+    reason: Optional[str]
     created_at: datetime
 
     class Config:
@@ -233,6 +257,68 @@ def update_process(
     db.commit()
     db.refresh(process)
     return process
+
+
+@router.get("/{machine_id}/maintenance", response_model=List[MaintenanceOut])
+def list_maintenance(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """設備のメンテナンス枠一覧（未来のものだけ返す）"""
+    return db.query(models.MachineMaintenance).filter(
+        models.MachineMaintenance.machine_id == machine_id,
+        models.MachineMaintenance.tenant_id == tenant_id,
+    ).order_by(models.MachineMaintenance.start_datetime).all()
+
+
+@router.post("/{machine_id}/maintenance", response_model=MaintenanceOut, status_code=201)
+def create_maintenance(
+    machine_id: int,
+    payload: MaintenanceCreate,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """メンテナンス枠を登録する"""
+    machine = db.query(models.Machine).filter(
+        models.Machine.id == machine_id,
+        models.Machine.tenant_id == tenant_id,
+    ).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="設備が見つかりません")
+    if payload.end_datetime <= payload.start_datetime:
+        raise HTTPException(status_code=422, detail="終了日時は開始日時より後にしてください")
+
+    mw = models.MachineMaintenance(
+        tenant_id=tenant_id,
+        machine_id=machine_id,
+        start_datetime=payload.start_datetime,
+        end_datetime=payload.end_datetime,
+        reason=payload.reason,
+    )
+    db.add(mw)
+    db.commit()
+    db.refresh(mw)
+    return mw
+
+
+@router.delete("/{machine_id}/maintenance/{maint_id}", status_code=204)
+def delete_maintenance(
+    machine_id: int,
+    maint_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """メンテナンス枠を削除する"""
+    mw = db.query(models.MachineMaintenance).filter(
+        models.MachineMaintenance.id == maint_id,
+        models.MachineMaintenance.machine_id == machine_id,
+        models.MachineMaintenance.tenant_id == tenant_id,
+    ).first()
+    if not mw:
+        raise HTTPException(status_code=404, detail="メンテナンス枠が見つかりません")
+    db.delete(mw)
+    db.commit()
 
 
 @router.delete("/processes/{process_id}", status_code=204)

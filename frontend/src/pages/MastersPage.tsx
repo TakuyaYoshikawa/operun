@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { machinesApi, processesApi } from '../api/machines'
-import type { Machine, Process } from '../api/machines'
+import type { Machine, MachineMaintenance, Process } from '../api/machines'
 import { customersApi } from '../api/customers'
 import type { Customer } from '../api/customers'
 import { calendarApi } from '../api/calendar'
@@ -80,12 +80,28 @@ export default function MastersPage() {
     queryKey: ['machines'],
     queryFn: () => machinesApi.list().then(r => r.data),
   })
-  const [mForm, setMForm] = useState({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, is_active: true, is_outsource: false, outsource_supplier: null as string | null })
+  const [mForm, setMForm] = useState({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, work_start_hour: '' as string | number, is_active: true, is_outsource: false, outsource_supplier: null as string | null })
   const [mEditId, setMEditId] = useState<number | null>(null)
+  const [maintMachineId, setMaintMachineId] = useState<number | null>(null)
+  const [maintForm, setMaintForm] = useState({ start_datetime: '', end_datetime: '', reason: '' })
   const createM = useMutation({ mutationFn: machinesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const updateM = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Machine> }) => machinesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }), onError: (err) => alert(getApiError(err)) })
-  const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
+  const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, work_start_hour: '', is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
+  const { data: maintList } = useQuery({
+    queryKey: ['maintenance', maintMachineId],
+    queryFn: () => maintMachineId ? machinesApi.maintenance.list(maintMachineId).then(r => r.data) : Promise.resolve([]),
+    enabled: maintMachineId !== null,
+  })
+  const addMaint = useMutation({
+    mutationFn: (data: { start_datetime: string; end_datetime: string; reason?: string }) =>
+      machinesApi.maintenance.create(maintMachineId!, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['maintenance', maintMachineId] }); setMaintForm({ start_datetime: '', end_datetime: '', reason: '' }) },
+  })
+  const deleteMaint = useMutation({
+    mutationFn: (maintId: number) => machinesApi.maintenance.delete(maintMachineId!, maintId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['maintenance', maintMachineId] }),
+  })
 
   // ── 工程 ──────────────────────────────────────────────────────────────────
   const { data: processes } = useQuery({
@@ -170,7 +186,11 @@ export default function MastersPage() {
       {tab === 'machines' && (
         <div>
           <form
-            onSubmit={e => { e.preventDefault(); mEditId ? updateM.mutate({ id: mEditId, data: mForm }) : createM.mutate(mForm) }}
+            onSubmit={e => {
+              e.preventDefault()
+              const data = { ...mForm, work_start_hour: mForm.work_start_hour === '' ? null : Number(mForm.work_start_hour) }
+              mEditId ? updateM.mutate({ id: mEditId, data }) : createM.mutate(data as Parameters<typeof machinesApi.create>[0])
+            }}
             className="bg-white border border-gray-200 rounded-xl p-5 mb-5 shadow-sm grid grid-cols-2 gap-4"
           >
             <h2 className="col-span-2 text-base font-semibold text-gray-700">{mEditId ? '設備編集' : '設備追加'}</h2>
@@ -216,6 +236,16 @@ export default function MastersPage() {
                 onChange={e => setMForm(f => ({ ...f, batch_capacity: Number(e.target.value) }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                稼働開始時刻（時）
+                <span className="ml-1 text-gray-400 font-normal">（空欄=テナント設定を使用）</span>
+              </label>
+              <input type="number" min={0} max={23} placeholder="例: 6"
+                value={mForm.work_start_hour}
+                onChange={e => setMForm(f => ({ ...f, work_start_hour: e.target.value === '' ? '' : Number(e.target.value) }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
             <div className="col-span-2 flex gap-3 justify-end">
               {mEditId && <button type="button" onClick={resetM} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">キャンセル</button>}
               <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
@@ -258,7 +288,8 @@ export default function MastersPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => { setMForm({ name: m.name, code: m.code, machine_type: m.machine_type ?? '', daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, batch_capacity: m.batch_capacity ?? 1, is_active: m.is_active, is_outsource: m.is_outsource, outsource_supplier: m.outsource_supplier }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
+                      <button onClick={() => { setMForm({ name: m.name, code: m.code, machine_type: m.machine_type ?? '', daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, batch_capacity: m.batch_capacity ?? 1, work_start_hour: m.work_start_hour ?? '', is_active: m.is_active, is_outsource: m.is_outsource, outsource_supplier: m.outsource_supplier }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
+                      <button onClick={() => setMaintMachineId(maintMachineId === m.id ? null : m.id)} className="text-purple-400 hover:text-purple-600 mr-3 text-xs">メンテ</button>
                       <button onClick={() => { if (confirm('削除しますか？')) deleteM.mutate(m.id) }} className="text-red-400 hover:text-red-600 text-xs">削除</button>
                     </td>
                   </tr>
@@ -266,6 +297,58 @@ export default function MastersPage() {
               </tbody>
             </table>
           </div>
+
+          {/* メンテナンス枠パネル */}
+          {maintMachineId !== null && (
+            <div className="mt-4 bg-purple-50 border border-purple-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-purple-800 mb-3">
+                {machines?.find(m => m.id === maintMachineId)?.name} — メンテナンス枠
+              </h3>
+              <form
+                onSubmit={e => {
+                  e.preventDefault()
+                  addMaint.mutate({ start_datetime: maintForm.start_datetime, end_datetime: maintForm.end_datetime, reason: maintForm.reason || undefined })
+                }}
+                className="flex gap-2 items-end flex-wrap mb-4"
+              >
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">開始日時 *</label>
+                  <input required type="datetime-local" value={maintForm.start_datetime}
+                    onChange={e => setMaintForm(f => ({ ...f, start_datetime: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">終了日時 *</label>
+                  <input required type="datetime-local" value={maintForm.end_datetime}
+                    onChange={e => setMaintForm(f => ({ ...f, end_datetime: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">理由</label>
+                  <input type="text" placeholder="定期点検・修理等" value={maintForm.reason}
+                    onChange={e => setMaintForm(f => ({ ...f, reason: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-32" />
+                </div>
+                <button type="submit" disabled={addMaint.isPending}
+                  className="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-purple-700 disabled:opacity-60">
+                  ＋ 登録
+                </button>
+              </form>
+              {maintList && maintList.length > 0 ? (
+                <div className="space-y-1">
+                  {maintList.map((mw: MachineMaintenance) => (
+                    <div key={mw.id} className="flex items-center gap-3 bg-white px-3 py-2 rounded-lg text-sm border border-purple-100">
+                      <span className="text-gray-700">{mw.start_datetime.slice(0, 16).replace('T', ' ')} 〜 {mw.end_datetime.slice(0, 16).replace('T', ' ')}</span>
+                      {mw.reason && <span className="text-gray-500 text-xs bg-gray-100 px-2 py-0.5 rounded">{mw.reason}</span>}
+                      <button onClick={() => deleteMaint.mutate(mw.id)} className="ml-auto text-red-300 hover:text-red-500 text-xs">削除</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">メンテナンス枠なし</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

@@ -10,6 +10,7 @@ export interface Operation {
   duration_hours: number
   is_urgent: boolean
   wait_hours_after: number
+  not_before_date: string | null
   planned_start: string | null
   planned_end: string | null
   op_status: string
@@ -52,6 +53,7 @@ export interface OperationCreate {
   duration_hours: number
   is_urgent?: boolean
   wait_hours_after?: number
+  not_before_date?: string | null
 }
 
 export const ordersApi = {
