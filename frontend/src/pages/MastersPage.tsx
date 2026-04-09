@@ -80,12 +80,12 @@ export default function MastersPage() {
     queryKey: ['machines'],
     queryFn: () => machinesApi.list().then(r => r.data),
   })
-  const [mForm, setMForm] = useState({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true, is_outsource: false, outsource_supplier: null as string | null })
+  const [mForm, setMForm] = useState({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, is_active: true, is_outsource: false, outsource_supplier: null as string | null })
   const [mEditId, setMEditId] = useState<number | null>(null)
   const createM = useMutation({ mutationFn: machinesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const updateM = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Machine> }) => machinesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }), onError: (err) => alert(getApiError(err)) })
-  const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
+  const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
 
   // ── 工程 ──────────────────────────────────────────────────────────────────
   const { data: processes } = useQuery({
@@ -207,6 +207,15 @@ export default function MastersPage() {
                 onChange={e => setMForm(f => ({ ...f, setup_time_minutes: Number(e.target.value) }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                バッチ処理数
+                <span className="ml-1 text-gray-400 font-normal">（炉・焼入れ等の同時投入可能数）</span>
+              </label>
+              <input type="number" min={1} max={100} value={mForm.batch_capacity}
+                onChange={e => setMForm(f => ({ ...f, batch_capacity: Number(e.target.value) }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
             <div className="col-span-2 flex gap-3 justify-end">
               {mEditId && <button type="button" onClick={resetM} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">キャンセル</button>}
               <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
@@ -249,7 +258,7 @@ export default function MastersPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => { setMForm({ name: m.name, code: m.code, machine_type: m.machine_type ?? '', daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, is_active: m.is_active, is_outsource: m.is_outsource, outsource_supplier: m.outsource_supplier }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
+                      <button onClick={() => { setMForm({ name: m.name, code: m.code, machine_type: m.machine_type ?? '', daily_capacity_hours: m.daily_capacity_hours, setup_time_minutes: m.setup_time_minutes, batch_capacity: m.batch_capacity ?? 1, is_active: m.is_active, is_outsource: m.is_outsource, outsource_supplier: m.outsource_supplier }); setMEditId(m.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
                       <button onClick={() => { if (confirm('削除しますか？')) deleteM.mutate(m.id) }} className="text-red-400 hover:text-red-600 text-xs">削除</button>
                     </td>
                   </tr>

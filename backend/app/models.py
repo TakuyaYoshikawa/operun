@@ -77,6 +77,7 @@ class Machine(Base):
     setup_time_minutes = Column(Float, default=30.0)
     is_active = Column(Boolean, default=True)
     machine_type = Column(String, nullable=True)               # 設備グループ名（例：旋盤・マシニング）
+    batch_capacity = Column(Integer, default=1)                 # 同時処理可能数（炉・焼入れ等）
     # 外注フィールド（Phase 3）
     is_outsource = Column(Boolean, default=False)
     outsource_supplier = Column(String, nullable=True)         # 外注先名
@@ -138,6 +139,7 @@ class Operation(Base):
     planned_end = Column(DateTime, nullable=True)
     duration_hours = Column(Float, nullable=False)
     is_urgent = Column(Boolean, default=False)
+    wait_hours_after = Column(Float, default=0.0)               # 次工程までの待機時間（冷却・乾燥等）
 
     machine_locked = Column(Boolean, default=False)            # True=設備固定、False=同グループから自動選択
 

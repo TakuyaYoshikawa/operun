@@ -32,6 +32,8 @@ if "sqlite" in DATABASE_URL:
     _add_column_if_missing("operations", "draft_start",         "DATETIME")
     _add_column_if_missing("operations", "draft_end",           "DATETIME")
     _add_column_if_missing("operations", "draft_machine_id",    "INTEGER")
+    _add_column_if_missing("machines",   "batch_capacity",      "INTEGER DEFAULT 1")
+    _add_column_if_missing("operations", "wait_hours_after",    "FLOAT DEFAULT 0")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 

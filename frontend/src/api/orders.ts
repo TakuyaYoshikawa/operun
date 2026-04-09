@@ -9,6 +9,7 @@ export interface Operation {
   process_id: number | null
   duration_hours: number
   is_urgent: boolean
+  wait_hours_after: number
   planned_start: string | null
   planned_end: string | null
   op_status: string
@@ -50,6 +51,7 @@ export interface OperationCreate {
   process_id?: number | null
   duration_hours: number
   is_urgent?: boolean
+  wait_hours_after?: number
 }
 
 export const ordersApi = {

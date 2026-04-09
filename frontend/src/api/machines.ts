@@ -7,6 +7,7 @@ export interface Machine {
   machine_type: string | null
   daily_capacity_hours: number
   setup_time_minutes: number
+  batch_capacity: number
   is_active: boolean
   is_outsource: boolean
   outsource_supplier: string | null
