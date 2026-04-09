@@ -6,8 +6,8 @@ interface Props {
 }
 
 export default function LoginPage({ onLogin }: Props) {
-  const [email, setEmail] = useState('demo@example.com')
-  const [password, setPassword] = useState('demo1234')
+  const [email, setEmail] = useState('admin@operun.jp')
+  const [password, setPassword] = useState('admin1234')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
