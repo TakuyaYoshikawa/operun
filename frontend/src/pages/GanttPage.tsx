@@ -268,6 +268,12 @@ export default function GanttPage() {
     onSuccess: () => { setEditTask(null); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
   })
 
+  // ★ 早期returnより前に全フックを呼ぶ (React rules of hooks)
+  const { data: tenantSettings } = useQuery({
+    queryKey: ['tenant-settings'],
+    queryFn: () => settingsApi.get().then(r => r.data),
+  })
+
   const handleBarClick = (task: GanttTask) => {
     if (viewDraft) setEditTask(task)
   }
@@ -315,10 +321,6 @@ export default function GanttPage() {
     cur.setDate(cur.getDate() + 1)
   }
 
-  const { data: tenantSettings } = useQuery({
-    queryKey: ['tenant-settings'],
-    queryFn: () => settingsApi.get().then(r => r.data),
-  })
   const WORK_START = tenantSettings?.work_start_hour ?? 8
   const WORK_HOURS = tenantSettings?.work_hours_per_day ?? 8
   const hourWidth  = 60  // 時間モード: 1時間あたりのpx
