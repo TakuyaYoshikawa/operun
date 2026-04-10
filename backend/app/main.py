@@ -42,12 +42,14 @@ if "sqlite" in DATABASE_URL:
 app = FastAPI(title="Operun API", version="0.1.0")
 
 # CORS：本番では ALLOWED_ORIGINS 環境変数にカンマ区切りでURLを指定
+# *.vercel.app は全てのVercelプレビューURLを許可するためにallow_origin_regexで対応
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Vercelのプレビュー/本番URL全て許可
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
