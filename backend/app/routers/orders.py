@@ -20,6 +20,8 @@ class OperationOut(BaseModel):
     process_id: Optional[int]
     duration_hours: float
     is_urgent: bool
+    wait_hours_after: float = 0.0
+    not_before_date: Optional[date] = None
     planned_start: Optional[datetime]
     planned_end: Optional[datetime]
     op_status: str
@@ -171,6 +173,8 @@ class OperationCreate(BaseModel):
     process_id: Optional[int] = None
     duration_hours: float = Field(..., gt=0)
     is_urgent: bool = False
+    wait_hours_after: float = 0.0
+    not_before_date: Optional[date] = None
 
 
 class OperationUpdate(BaseModel):
@@ -178,6 +182,8 @@ class OperationUpdate(BaseModel):
     process_id: Optional[int] = None
     duration_hours: Optional[float] = Field(None, gt=0)
     is_urgent: Optional[bool] = None
+    wait_hours_after: Optional[float] = None
+    not_before_date: Optional[date] = None
     worker: Optional[str] = None
     actual_note: Optional[str] = None
 
@@ -249,6 +255,8 @@ def add_operation(
         sequence=next_seq,
         duration_hours=payload.duration_hours,
         is_urgent=payload.is_urgent,
+        wait_hours_after=payload.wait_hours_after,
+        not_before_date=payload.not_before_date,
     )
     db.add(op)
     db.commit()

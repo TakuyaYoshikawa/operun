@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -46,12 +46,27 @@ def _build_calendars(db: Session, tenant_id: int) -> dict:
     ).all()
     non_working_dates = [h.date for h in holidays]
 
+    # 設備ごとのメンテナンス枠を一括取得
+    now = datetime.now()
+    maint_list = db.query(models.MachineMaintenance).filter(
+        models.MachineMaintenance.tenant_id == tenant_id,
+        models.MachineMaintenance.end_datetime >= now,  # 過去のものは除外
+    ).all()
+    maint_map: dict[int, list] = {}
+    for mw in maint_list:
+        maint_map.setdefault(mw.machine_id, []).append((mw.start_datetime, mw.end_datetime))
+
     return {
         m.id: MachineCalendar(
             machine_id=m.id,
             daily_hours=m.daily_capacity_hours or tenant_cfg["work_hours_per_day"],
-            work_start_hour=tenant_cfg["work_start_hour"],
+            # 設備個別のwork_start_hourが設定されていればそれを使用、なければテナント設定
+            work_start_hour=m.work_start_hour if m.work_start_hour is not None else tenant_cfg["work_start_hour"],
             non_working_days=non_working_dates,
+            batch_capacity=getattr(m, "batch_capacity", 1) or 1,
+            is_outsource=m.is_outsource or False,
+            outsource_lead_days=m.outsource_lead_days or 0,
+            maintenance_windows=maint_map.get(m.id, []),
         )
         for m in machines
     }
@@ -69,19 +84,29 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
     """テナントの受注工程を読み込んでOperationInputリストを生成。
     machine_locked=False かつ同グループの設備が複数ある場合は allowed_machine_ids を設定する。"""
 
-    # 設備グループマップを構築: machine_type -> [machine_id, ...]
-    machines = db.query(models.Machine).filter(
+    # 通常設備（グループ自動選択・段取り時間用）
+    regular_machines = db.query(models.Machine).filter(
         models.Machine.tenant_id == tenant_id,
         models.Machine.is_active == True,
         models.Machine.is_outsource == False,
     ).all()
+    # 設備グループマップ: machine_type -> [machine_id, ...]
     type_to_ids: dict[str, list[int]] = {}
-    for m in machines:
+    for m in regular_machines:
         if m.machine_type:
             type_to_ids.setdefault(m.machine_type, []).append(m.id)
-    machine_type_map: dict[int, str] = {m.id: m.machine_type for m in machines if m.machine_type}
-    # 設備ごとの段取り時間（時間単位）
-    setup_hours_map: dict[int, float] = {m.id: (m.setup_time_minutes or 0) / 60.0 for m in machines}
+    machine_type_map: dict[int, str] = {m.id: m.machine_type for m in regular_machines if m.machine_type}
+    # 段取り時間（時間単位）
+    setup_hours_map: dict[int, float] = {m.id: (m.setup_time_minutes or 0) / 60.0 for m in regular_machines}
+
+    # 外注設備マップ
+    outsource_machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == True,
+        models.Machine.is_outsource == True,
+    ).all()
+    outsource_lead_days_map: dict[int, int] = {m.id: m.outsource_lead_days or 0 for m in outsource_machines}
+    outsource_machine_ids: set[int] = {m.id for m in outsource_machines}
 
     ops = (
         db.query(models.Operation)
@@ -96,17 +121,28 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
 
     result = []
     for op in ops:
-        # グループ内の候補設備を決定
-        allowed: list[int] = []
-        locked = getattr(op, "machine_locked", False)
-        if not locked:
-            mtype = machine_type_map.get(op.machine_id)
-            if mtype and len(type_to_ids.get(mtype, [])) > 1:
-                allowed = type_to_ids[mtype]
+        if op.machine_id in outsource_machine_ids:
+            # 外注設備: リードタイム日数をカレンダー時間に変換、グループ自動選択なし
+            lead_days = outsource_lead_days_map.get(op.machine_id, 0)
+            total_hours = float(lead_days * 24)
+            allowed: list[int] = []
+        else:
+            # グループ内の候補設備を決定
+            allowed = []
+            locked = getattr(op, "machine_locked", False)
+            if not locked:
+                mtype = machine_type_map.get(op.machine_id)
+                if mtype and len(type_to_ids.get(mtype, [])) > 1:
+                    allowed = type_to_ids[mtype]
+            # 段取り時間を加算（実加工時間 + 段取り時間）
+            setup_h = setup_hours_map.get(op.machine_id, 0.0)
+            total_hours = op.duration_hours + setup_h
 
-        # 段取り時間を加算（実加工時間 + 段取り時間）
-        setup_h = setup_hours_map.get(op.machine_id, 0.0)
-        total_hours = op.duration_hours + setup_h
+        # 材料調達待ち: not_before_date が設定されている場合は datetime に変換
+        not_before_dt = None
+        nb = getattr(op, "not_before_date", None)
+        if nb:
+            not_before_dt = datetime(nb.year, nb.month, nb.day, 0, 0, 0)
 
         result.append(OperationInput(
             order_id=op.order.id,
@@ -119,6 +155,8 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
             priority=op.order.priority,
             is_urgent=op.is_urgent,
             allowed_machine_ids=allowed,
+            wait_hours_after=getattr(op, "wait_hours_after", 0.0) or 0.0,
+            not_before=not_before_dt,
         ))
     return result
 

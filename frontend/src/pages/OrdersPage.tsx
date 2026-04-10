@@ -24,7 +24,7 @@ const emptyForm: OrderCreate = {
 }
 
 const emptyOpForm: OperationCreate = {
-  machine_id: 0, process_id: null, duration_hours: 1, is_urgent: false,
+  machine_id: 0, process_id: null, duration_hours: 1, is_urgent: false, wait_hours_after: 0, not_before_date: null,
 }
 
 // ── 工程エディタ（受注詳細の下部に表示）─────────────────────────────────────
@@ -88,6 +88,8 @@ function OperationsEditor({ order }: { order: Order }) {
       process_id: op.process_id,
       duration_hours: op.duration_hours,
       is_urgent: op.is_urgent,
+      wait_hours_after: op.wait_hours_after ?? 0,
+      not_before_date: op.not_before_date ?? null,
     })
     setEditOpId(op.id)
   }
@@ -201,6 +203,26 @@ function OperationsEditor({ order }: { order: Order }) {
             value={opForm.duration_hours}
             onChange={e => setOpForm(f => ({ ...f, duration_hours: Number(e.target.value) }))}
             className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">待機時間(h)</label>
+          <input
+            type="number" min={0} step={0.5}
+            value={opForm.wait_hours_after ?? 0}
+            onChange={e => setOpForm(f => ({ ...f, wait_hours_after: Number(e.target.value) }))}
+            className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+            title="次工程開始までの待機時間（冷却・乾燥等）"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">開始不可日</label>
+          <input
+            type="date"
+            value={opForm.not_before_date ?? ''}
+            onChange={e => setOpForm(f => ({ ...f, not_before_date: e.target.value || null }))}
+            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+            title="材料入荷待ち等、この日付以降に工程を開始"
           />
         </div>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5 cursor-pointer">
