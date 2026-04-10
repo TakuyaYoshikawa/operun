@@ -215,6 +215,14 @@ def run_schedule(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """スケジューリングを実行して下書きカラムに保存する（現行スケジュールは変更しない）。"""
+    import traceback
+    try:
+        return _run_schedule_impl(db, tenant_id, optimizer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"[DEBUG] {type(e).__name__}: {e}\n{traceback.format_exc()}")
+
+
+def _run_schedule_impl(db: Session, tenant_id: int, optimizer: str):
     engine = _build_engine(db, tenant_id, optimizer)
     op_inputs = _build_operation_inputs(db, tenant_id)
 
