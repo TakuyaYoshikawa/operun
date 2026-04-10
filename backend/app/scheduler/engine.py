@@ -25,6 +25,9 @@ class OperationInput:
     allowed_machine_ids: List[int] = field(default_factory=list)  # グループ内の候補設備IDリスト
     wait_hours_after: float = 0.0          # この工程完了後の待機時間（冷却・乾燥等）
     not_before: Optional[datetime] = None  # 開始不可日（材料入荷待ち等）
+    schedule_locked: bool = False          # True=日時固定（再スケジュールで上書き禁止）
+    locked_start: Optional[datetime] = None  # ロック時の固定開始日時
+    locked_end: Optional[datetime] = None    # ロック時の固定終了日時
 
 
 @dataclass
@@ -48,11 +51,13 @@ class MachineCalendar:
     machine_id: int
     daily_hours: float = 8.0
     work_start_hour: int = 8   # 稼働開始時刻
-    non_working_days: List[date] = field(default_factory=list)  # 非稼働日
+    non_working_days: List[date] = field(default_factory=list)  # 非稼働日（全休）
+    reduced_hours_days: Dict[date, float] = field(default_factory=dict)  # 短縮稼働日: date -> hours
     batch_capacity: int = 1    # 同時処理可能数（炉・焼入れ等）
     is_outsource: bool = False              # 外注設備フラグ
     outsource_lead_days: int = 0           # 外注リードタイム（日）
     maintenance_windows: List[Tuple[datetime, datetime]] = field(default_factory=list)  # (開始, 終了)
+    saturday_off: bool = False             # 土曜休みフラグ
 
     def _in_maintenance(self, dt: datetime) -> Optional[datetime]:
         """dt がメンテナンス中なら終了時刻を返す、そうでなければ None"""
@@ -69,6 +74,20 @@ class MachineCalendar:
                 result = mw_start if result is None else min(result, mw_start)
         return result
 
+    def _is_off_day(self, d: date) -> bool:
+        """非稼働日かどうか（祝日・日曜・土曜休み設定）"""
+        if d in self.non_working_days:
+            return True
+        if d.weekday() == 6:  # 日曜
+            return True
+        if self.saturday_off and d.weekday() == 5:  # 土曜休み
+            return True
+        return False
+
+    def _day_hours(self, d: date) -> float:
+        """その日の稼働時間（短縮稼働日対応）"""
+        return self.reduced_hours_days.get(d, self.daily_hours)
+
     def next_available(self, from_dt: datetime) -> datetime:
         """指定日時以降の最初の稼働開始時刻を返す"""
         if self.is_outsource:
@@ -80,18 +99,14 @@ class MachineCalendar:
             if mw_end is not None:
                 dt = mw_end
                 continue
-            # 非稼働日チェック
-            if dt.date() in self.non_working_days:
+            # 非稼働日チェック（祝日・日曜・土曜休み）
+            if self._is_off_day(dt.date()):
                 dt = (dt + timedelta(days=1)).replace(
                     hour=self.work_start_hour, minute=0, second=0, microsecond=0)
                 continue
-            if dt.weekday() == 6:  # 日曜
-                dt = (dt + timedelta(days=1)).replace(
-                    hour=self.work_start_hour, minute=0, second=0, microsecond=0)
-                continue
-            # 稼働時間内かチェック
+            # 稼働時間内かチェック（短縮稼働日対応）
             work_start = dt.replace(hour=self.work_start_hour, minute=0, second=0, microsecond=0)
-            work_end = work_start + timedelta(hours=self.daily_hours)
+            work_end = work_start + timedelta(hours=self._day_hours(dt.date()))
             if dt < work_start:
                 dt = work_start
                 continue  # work_start でメンテナンスが始まっている可能性があるので再チェック
@@ -103,7 +118,7 @@ class MachineCalendar:
         return dt
 
     def add_hours(self, start: datetime, hours: float) -> datetime:
-        """稼働時間を考慮して終了日時を計算（日またぎ・メンテナンス枠対応）"""
+        """稼働時間を考慮して終了日時を計算（日またぎ・メンテナンス枠・短縮稼働日対応）"""
         if self.is_outsource:
             # 外注: hours = lead_days * 24 として渡されるためカレンダー時間で加算
             return start + timedelta(hours=hours)
@@ -113,7 +128,7 @@ class MachineCalendar:
             if remaining <= 0:
                 break
             work_start = current.replace(hour=self.work_start_hour, minute=0, second=0, microsecond=0)
-            day_end = work_start + timedelta(hours=self.daily_hours)
+            day_end = work_start + timedelta(hours=self._day_hours(current.date()))
             # メンテナンスが稼働時間内に割り込む場合は早めに切る
             mw_interrupt = self._next_maintenance_start(current, day_end)
             block_end = mw_interrupt if mw_interrupt else day_end
@@ -190,7 +205,42 @@ class SchedulingEngine:
         # 受注ごとの前工程終了時刻（工程順序の依存関係を保証）
         order_prev_end: Dict[int, datetime] = {}
 
+        # ── ① ロック済み工程を先に処理してスロットを占有させる ──
         for op in sorted_ops:
+            if not op.schedule_locked or op.locked_start is None or op.locked_end is None:
+                continue
+            # ロック済み工程は固定日時をそのまま使用
+            planned_start = op.locked_start
+            planned_end = op.locked_end
+            mid = op.machine_id
+            # 設備スロットを更新（占有済みとして記録）
+            if mid in self._machine_slots:
+                self._update_slot(mid, planned_end)
+            # 前工程終了時刻を更新
+            prev_next = planned_end + timedelta(hours=op.wait_hours_after) if op.wait_hours_after > 0 else planned_end
+            cur = order_prev_end.get(op.order_id)
+            if cur is None or prev_next > cur:
+                order_prev_end[op.order_id] = prev_next
+            due_dt = datetime(op.due_date.year, op.due_date.month, op.due_date.day, 17, 0)
+            is_delayed = planned_end > due_dt
+            results.append(ScheduledOperation(
+                order_id=op.order_id,
+                order_number=op.order_number,
+                product_name=op.product_name,
+                machine_id=mid,
+                sequence=op.sequence,
+                planned_start=planned_start,
+                planned_end=planned_end,
+                duration_hours=op.duration_hours,
+                due_date=op.due_date,
+                is_delayed=is_delayed,
+                delay_days=round(max(0, (planned_end - due_dt).total_seconds() / 86400), 1),
+            ))
+
+        # ── ② 通常工程（ロックなし）を処理 ──
+        for op in sorted_ops:
+            if op.schedule_locked:
+                continue  # ロック済みは上で処理済み
             # 候補設備リストを決定（グループ指定がある場合はそちらを優先）
             candidates = op.allowed_machine_ids if op.allowed_machine_ids else [op.machine_id]
             candidates = [mid for mid in candidates if mid in self.calendars]

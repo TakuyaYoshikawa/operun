@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { scheduleApi } from '../api/schedule'
 import { machinesApi } from '../api/machines'
 import { settingsApi } from '../api/settings'
-import type { GanttTask } from '../api/schedule'
+import type { GanttTask, MachineLoad } from '../api/schedule'
 
 const DRAFT_BANNER_CLASS = 'bg-yellow-50 border-yellow-300 text-yellow-800'
 
@@ -125,6 +125,88 @@ function GanttBar({
   )
 }
 
+// ── 負荷グラフ ────────────────────────────────────────────────────────────────
+
+function LoadChart({ data, days }: { data: MachineLoad[]; days: number }) {
+  const WEEKDAYS_SHORT = ['日', '月', '火', '水', '木', '金', '土']
+  const machines = data.filter(m => !m.is_outsource)
+
+  if (machines.length === 0) return (
+    <div className="p-8 text-center text-gray-400 text-sm">設備データがありません</div>
+  )
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs border-collapse min-w-[600px]">
+        <thead>
+          <tr>
+            <th className="text-left px-3 py-2 bg-gray-50 border-b border-gray-200 font-medium text-gray-600 sticky left-0 z-10 w-32">設備</th>
+            {machines[0].days.map(d => {
+              const dt = new Date(d.date)
+              const dow = dt.getDay()
+              const isWeekend = dow === 0 || dow === 6
+              const isHoliday = d.capacity_hours === 0
+              return (
+                <th key={d.date}
+                  className={`text-center px-1 py-1.5 border-b border-gray-200 font-medium w-10 ${
+                    isHoliday ? 'bg-gray-100 text-gray-300' :
+                    isWeekend ? (dow === 0 ? 'bg-red-50 text-red-400' : 'bg-blue-50 text-blue-400') :
+                    'bg-gray-50 text-gray-500'
+                  }`}>
+                  <div>{dt.getMonth()+1}/{dt.getDate()}</div>
+                  <div className="text-[9px] opacity-70">{WEEKDAYS_SHORT[dow]}</div>
+                </th>
+              )
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {machines.map(m => (
+            <tr key={m.machine_id} className="border-b border-gray-100 hover:bg-gray-50">
+              <td className="px-3 py-2 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-100">{m.name}</td>
+              {m.days.map(d => {
+                const isHoliday = d.capacity_hours === 0
+                if (isHoliday) return (
+                  <td key={d.date} className="px-1 py-1.5 text-center bg-gray-50">
+                    <div className="text-gray-300 text-[10px]">休</div>
+                  </td>
+                )
+                const pct = Math.min(d.utilization * 100, 100)
+                const color = d.over_capacity ? 'bg-red-500' :
+                              pct >= 85 ? 'bg-orange-400' :
+                              pct >= 50 ? 'bg-blue-400' : 'bg-blue-200'
+                return (
+                  <td key={d.date} className="px-1 py-1.5 text-center" title={`${d.load_hours.toFixed(1)}h / ${d.capacity_hours}h`}>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <div className="w-7 h-5 bg-gray-100 rounded-sm overflow-hidden flex items-end">
+                        <div
+                          className={`w-full rounded-sm transition-all ${color}`}
+                          style={{ height: `${Math.max(pct, d.load_hours > 0 ? 10 : 0)}%` }}
+                        />
+                      </div>
+                      {d.load_hours > 0 && (
+                        <span className={`text-[9px] font-medium tabular-nums ${d.over_capacity ? 'text-red-600' : 'text-gray-500'}`}>
+                          {d.load_hours.toFixed(0)}h
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center gap-4 text-[10px] text-gray-500">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-500 inline-block"/> 超過</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block"/> 高負荷(≥85%)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-400 inline-block"/> 中(≥50%)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-200 inline-block"/> 低(&lt;50%)</span>
+      </div>
+    </div>
+  )
+}
+
 // ── 下書き工程編集モーダル ────────────────────────────────────────────────────
 
 function toLocalInput(dt: string) {
@@ -216,6 +298,7 @@ function DraftEditModal({
 // ── メインページ ──────────────────────────────────────────────────────────────
 
 type ViewMode = 'day' | 'hour'
+type TabMode = 'gantt' | 'load'
 
 export default function GanttPage() {
   const qc = useQueryClient()
@@ -223,6 +306,7 @@ export default function GanttPage() {
   const [viewDraft, setViewDraft] = useState(false)
   const [editTask, setEditTask] = useState<GanttTask | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
+  const [tabMode, setTabMode] = useState<TabMode>('gantt')
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['gantt'] })
@@ -268,10 +352,21 @@ export default function GanttPage() {
     onSuccess: () => { setEditTask(null); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
   })
 
+  const lockMut = useMutation({
+    mutationFn: (opId: number) => scheduleApi.toggleLock(opId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['gantt'] }); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
+  })
+
   // ★ 早期returnより前に全フックを呼ぶ (React rules of hooks)
   const { data: tenantSettings } = useQuery({
     queryKey: ['tenant-settings'],
     queryFn: () => settingsApi.get().then(r => r.data),
+  })
+
+  const { data: loadData } = useQuery({
+    queryKey: ['load-chart', viewDraft],
+    queryFn: () => scheduleApi.getLoadChart(21, viewDraft).then(r => r.data),
+    enabled: tabMode === 'load',
   })
 
   const handleBarClick = (task: GanttTask) => {
@@ -352,6 +447,7 @@ export default function GanttPage() {
             <span className="flex items-center gap-1">
               <span className="inline-block w-3 h-3 rounded-sm border-2 border-red-500" /> = 納期超過
             </span>
+            <span className="flex items-center gap-1">🔒 = スケジュールロック</span>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -378,7 +474,19 @@ export default function GanttPage() {
               {createDraftMut.isPending ? '作成中...' : '✏️ 下書き作成'}
             </button>
           )}
-          {/* 日/時間 切替 */}
+          {/* ガント/負荷グラフ 切替 */}
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
+            <button
+              onClick={() => setTabMode('gantt')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${tabMode === 'gantt' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
+            >ガント</button>
+            <button
+              onClick={() => setTabMode('load')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${tabMode === 'load' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
+            >負荷グラフ</button>
+          </div>
+          {/* 日/時間 切替（ガントモード時のみ） */}
+          {tabMode === 'gantt' && (
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
             <button
               onClick={() => setViewMode('day')}
@@ -389,6 +497,7 @@ export default function GanttPage() {
               className={`px-3 py-1.5 rounded-md font-medium transition-colors ${viewMode === 'hour' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
             >時間</button>
           </div>
+          )}
           {/* スケジュール最適化 */}
           <button
             onClick={() => runMut.mutate()}
@@ -451,6 +560,23 @@ export default function GanttPage() {
         )}
       </div>
 
+      {/* 負荷グラフタブ */}
+      {tabMode === 'load' && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm mb-6">
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">設備別負荷グラフ（21日間）</h2>
+            <div className="text-xs text-gray-400">棒の高さ = 稼働率、数字 = 負荷時間</div>
+          </div>
+          {loadData ? (
+            <LoadChart data={loadData.machines} days={21} />
+          ) : (
+            <div className="p-8 text-center text-gray-400 text-sm">読み込み中...</div>
+          )}
+        </div>
+      )}
+
+      {/* ガントチャート本体（ガントタブ時のみ） */}
+      {tabMode === 'gantt' && (<>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div className="flex">
           {/* 設備ラベル列 */}
@@ -638,6 +764,7 @@ export default function GanttPage() {
                     <th className="text-right px-3 py-2.5 font-medium">作業時間</th>
                     <th className="text-left px-3 py-2.5 font-medium">納期</th>
                     <th className="text-left px-3 py-2.5 font-medium">状態</th>
+                    <th className="px-3 py-2.5 text-center">ロック</th>
                     {viewDraft && <th className="px-3 py-2.5"></th>}
                   </tr>
                 </thead>
@@ -666,6 +793,19 @@ export default function GanttPage() {
                             {!t.is_urgent && !t.is_delayed && <span className="text-gray-300">—</span>}
                           </div>
                         </td>
+                        <td className="px-3 py-2.5 text-center">
+                          <button
+                            title={t.is_locked ? 'ロック解除' : 'スケジュールをロック（再スケジュールで変更されなくなります）'}
+                            onClick={() => {
+                              const opId = parseInt(t.id.replace('op-', ''), 10)
+                              lockMut.mutate(opId)
+                            }}
+                            disabled={lockMut.isPending}
+                            className={`text-base transition-opacity hover:opacity-70 ${t.is_locked ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
+                          >
+                            {t.is_locked ? '🔒' : '🔓'}
+                          </button>
+                        </td>
                         {viewDraft && (
                           <td className="px-3 py-2.5">
                             <button
@@ -685,6 +825,7 @@ export default function GanttPage() {
           </div>
         )
       })()}
+      </>)} {/* ガントタブ終了 */}
 
       {/* ツールチップ */}
       {tooltip && <Tooltip state={tooltip} />}

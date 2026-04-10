@@ -705,7 +705,7 @@ function SettingsTab() {
     queryKey: ['tenant-settings'],
     queryFn: () => settingsApi.get().then(r => r.data),
   })
-  const [form, setForm] = useState<{ work_start_hour: number; work_hours_per_day: number } | null>(null)
+  const [form, setForm] = useState<{ work_start_hour: number; work_hours_per_day: number; saturday_off: boolean } | null>(null)
   const current = form ?? data
 
   const mut = useMutation({
@@ -750,6 +750,22 @@ function SettingsTab() {
           <p className="text-xs text-gray-400 mt-1">
             例：8 → {current.work_start_hour}:00〜{current.work_start_hour + current.work_hours_per_day}:00
           </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-2">週休</label>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={current.saturday_off ?? false}
+                onChange={e => setForm(f => ({ ...(f ?? current), saturday_off: e.target.checked }))}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600"
+              />
+              <span className="text-sm text-gray-700">土曜日を休日にする（週休2日）</span>
+            </label>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">オフにすると土曜も稼働日として扱います（週休1日）</p>
         </div>
 
         <div className="pt-2 flex items-center gap-3">

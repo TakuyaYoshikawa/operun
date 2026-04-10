@@ -12,11 +12,13 @@ router = APIRouter()
 class SettingsOut(BaseModel):
     work_start_hour: int
     work_hours_per_day: float
+    saturday_off: bool = False
 
 
 class SettingsIn(BaseModel):
     work_start_hour: int
     work_hours_per_day: float
+    saturday_off: bool = False
 
 
 def _get_or_create(db: Session, tenant_id: int) -> models.TenantSettings:
@@ -37,7 +39,11 @@ def get_settings(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     s = _get_or_create(db, tenant_id)
-    return SettingsOut(work_start_hour=s.work_start_hour, work_hours_per_day=s.work_hours_per_day)
+    return SettingsOut(
+        work_start_hour=s.work_start_hour,
+        work_hours_per_day=s.work_hours_per_day,
+        saturday_off=getattr(s, "saturday_off", False) or False,
+    )
 
 
 @router.put("", response_model=SettingsOut)
@@ -49,6 +55,11 @@ def update_settings(
     s = _get_or_create(db, tenant_id)
     s.work_start_hour = payload.work_start_hour
     s.work_hours_per_day = payload.work_hours_per_day
+    s.saturday_off = payload.saturday_off
     db.commit()
     db.refresh(s)
-    return SettingsOut(work_start_hour=s.work_start_hour, work_hours_per_day=s.work_hours_per_day)
+    return SettingsOut(
+        work_start_hour=s.work_start_hour,
+        work_hours_per_day=s.work_hours_per_day,
+        saturday_off=getattr(s, "saturday_off", False) or False,
+    )

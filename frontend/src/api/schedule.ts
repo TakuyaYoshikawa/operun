@@ -12,7 +12,29 @@ export interface GanttTask {
   priority: number
   is_urgent: boolean
   is_delayed: boolean
+  is_locked: boolean
   color: string
+}
+
+export interface LoadDay {
+  date: string
+  load_hours: number
+  capacity_hours: number
+  utilization: number
+  over_capacity: boolean
+}
+
+export interface MachineLoad {
+  machine_id: number
+  name: string
+  code: string
+  is_outsource: boolean
+  days: LoadDay[]
+}
+
+export interface LoadChartData {
+  machines: MachineLoad[]
+  date_range: { start: string; end: string }
 }
 
 export interface DeliverySimResult {
@@ -41,4 +63,8 @@ export const scheduleApi = {
     priority: number
     is_urgent: boolean
   }) => api.post<DeliverySimResult>('/schedule/simulate/delivery', payload),
+  getLoadChart: (days = 21, draft = false) =>
+    api.get<LoadChartData>('/schedule/load', { params: { days, draft } }),
+  toggleLock: (operationId: number) =>
+    api.post<{ operation_id: number; schedule_locked: boolean }>(`/schedule/operations/${operationId}/lock`),
 }
