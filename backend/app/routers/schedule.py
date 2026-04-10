@@ -10,7 +10,11 @@ from app.auth import get_current_tenant_id
 from app.scheduler.engine import (
     SchedulingEngine, OperationInput, MachineCalendar
 )
-from app.scheduler.ortools_engine import ORToolsSchedulingEngine
+try:
+    from app.scheduler.ortools_engine import ORToolsSchedulingEngine
+    _ORTOOLS_AVAILABLE = True
+except Exception:
+    _ORTOOLS_AVAILABLE = False
 
 
 class DraftEditIn(BaseModel):
@@ -86,7 +90,7 @@ def _build_calendars(db: Session, tenant_id: int) -> dict:
 def _build_engine(db: Session, tenant_id: int, optimizer: str = "ortools") -> SchedulingEngine:
     """テナントの設備情報・カレンダー休日を読み込んでエンジンを初期化"""
     calendars = _build_calendars(db, tenant_id)
-    if optimizer == "ortools":
+    if optimizer == "ortools" and _ORTOOLS_AVAILABLE:
         return ORToolsSchedulingEngine(calendars)
     return SchedulingEngine(calendars)
 
