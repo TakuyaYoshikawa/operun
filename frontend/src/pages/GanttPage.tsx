@@ -377,9 +377,9 @@ export default function GanttPage() {
     updateDraftMut.mutate({ opId, payload: { draft_start: start, draft_end: end, draft_machine_id: machineId } })
   }
 
-  if (isLoading) return <div className="p-6 text-gray-500 text-sm">読み込み中...</div>
-
   const tasks = data?.tasks ?? []
+
+  if (isLoading || runMut.isPending) return <div className="p-6 text-gray-500 text-sm">読み込み中...</div>
 
   if (tasks.length === 0) {
     return (
