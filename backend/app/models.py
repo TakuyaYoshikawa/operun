@@ -163,6 +163,7 @@ class Operation(Base):
     not_before_date = Column(Date, nullable=True)               # 開始不可日（材料入荷待ち等）
 
     machine_locked = Column(Boolean, default=False)            # True=設備固定、False=同グループから自動選択
+    schedule_locked = Column(Boolean, default=False)           # True=日時固定（再スケジュールで上書き禁止）
 
     # 下書きスケジュール（確定前の一時保存）
     draft_start      = Column(DateTime, nullable=True)
@@ -216,6 +217,7 @@ class TenantSettings(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, unique=True, index=True)
     work_start_hour = Column(Integer, default=8)       # 稼働開始時刻（時）
     work_hours_per_day = Column(Float, default=8.0)    # 1日の稼働時間
+    saturday_off = Column(Boolean, default=False)       # 土曜休みフラグ
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     tenant = relationship("Tenant")

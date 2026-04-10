@@ -36,6 +36,8 @@ if "sqlite" in DATABASE_URL:
     _add_column_if_missing("machines",   "work_start_hour",     "INTEGER")
     _add_column_if_missing("operations", "wait_hours_after",    "FLOAT DEFAULT 0")
     _add_column_if_missing("operations", "not_before_date",     "DATE")
+    _add_column_if_missing("operations", "schedule_locked",     "BOOLEAN DEFAULT 0")
+    _add_column_if_missing("tenant_settings", "saturday_off",   "BOOLEAN DEFAULT 0")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 

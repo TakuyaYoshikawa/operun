@@ -27,8 +27,12 @@ def _get_tenant_settings(db: Session, tenant_id: int):
         models.TenantSettings.tenant_id == tenant_id
     ).first()
     if not s:
-        return {"work_start_hour": 8, "work_hours_per_day": 8.0}
-    return {"work_start_hour": s.work_start_hour, "work_hours_per_day": s.work_hours_per_day}
+        return {"work_start_hour": 8, "work_hours_per_day": 8.0, "saturday_off": False}
+    return {
+        "work_start_hour": s.work_start_hour,
+        "work_hours_per_day": s.work_hours_per_day,
+        "saturday_off": getattr(s, "saturday_off", False) or False,
+    }
 
 
 def _build_calendars(db: Session, tenant_id: int) -> dict:
@@ -40,11 +44,16 @@ def _build_calendars(db: Session, tenant_id: int) -> dict:
         models.Machine.is_active == True,
     ).all()
 
-    holidays = db.query(models.CalendarHoliday).filter(
+    # 全休日・短縮稼働日を一括取得
+    all_holidays = db.query(models.CalendarHoliday).filter(
         models.CalendarHoliday.tenant_id == tenant_id,
-        models.CalendarHoliday.working_hours == 0,
     ).all()
-    non_working_dates = [h.date for h in holidays]
+    non_working_dates = [h.date for h in all_holidays if h.working_hours == 0]
+    reduced_hours_days = {
+        h.date: h.working_hours
+        for h in all_holidays
+        if 0 < h.working_hours < (tenant_cfg["work_hours_per_day"] or 8.0)
+    }
 
     # 設備ごとのメンテナンス枠を一括取得
     now = datetime.now()
@@ -63,10 +72,12 @@ def _build_calendars(db: Session, tenant_id: int) -> dict:
             # 設備個別のwork_start_hourが設定されていればそれを使用、なければテナント設定
             work_start_hour=m.work_start_hour if m.work_start_hour is not None else tenant_cfg["work_start_hour"],
             non_working_days=non_working_dates,
+            reduced_hours_days=reduced_hours_days,
             batch_capacity=getattr(m, "batch_capacity", 1) or 1,
             is_outsource=m.is_outsource or False,
             outsource_lead_days=m.outsource_lead_days or 0,
             maintenance_windows=maint_map.get(m.id, []),
+            saturday_off=tenant_cfg["saturday_off"],
         )
         for m in machines
     }
@@ -144,6 +155,7 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
         if nb:
             not_before_dt = datetime(nb.year, nb.month, nb.day, 0, 0, 0)
 
+        schedule_locked = getattr(op, "schedule_locked", False) or False
         result.append(OperationInput(
             order_id=op.order.id,
             order_number=op.order.order_number,
@@ -154,9 +166,12 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
             due_date=op.order.due_date,
             priority=op.order.priority,
             is_urgent=op.is_urgent,
-            allowed_machine_ids=allowed,
+            allowed_machine_ids=[] if schedule_locked else allowed,  # ロック時は設備変更しない
             wait_hours_after=getattr(op, "wait_hours_after", 0.0) or 0.0,
             not_before=not_before_dt,
+            schedule_locked=schedule_locked,
+            locked_start=op.planned_start if schedule_locked else None,
+            locked_end=op.planned_end if schedule_locked else None,
         ))
     return result
 
@@ -174,6 +189,9 @@ def _write_results_to_ops(db: Session, tenant_id: int, results, draft: bool):
             .all()
         )
         for op in ops:
+            # schedule_locked=True の工程は日時・設備を上書きしない
+            if getattr(op, "schedule_locked", False):
+                continue
             if draft:
                 op.draft_start      = result.planned_start
                 op.draft_end        = result.planned_end
@@ -340,6 +358,7 @@ def get_gantt_data(
             "priority": op.order.priority,
             "is_urgent": op.is_urgent,
             "is_delayed": is_delayed,
+            "is_locked": getattr(op, "schedule_locked", False) or False,
             "color": "#e53e3e" if is_delayed else ("#f6ad55" if op.is_urgent else "#4aab68"),
         })
 
@@ -480,3 +499,119 @@ def check_delivery_date(
         "affected_orders": result["delayed_order_numbers"],
         "affected_count": result["total_delayed_orders"],
     }
+
+
+@router.get("/load")
+def get_load_chart(
+    days: int = 21,
+    draft: bool = False,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """設備別・日次負荷グラフデータを返す。"""
+    from datetime import date as date_type
+    calendars = _build_calendars(db, tenant_id)
+
+    # スケジュール済み工程を取得
+    q = (
+        db.query(models.Operation)
+        .join(models.Order)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Order.status != "done",
+        )
+    )
+    if draft:
+        q = q.filter(models.Operation.draft_start != None)
+        ops = [(op.draft_machine_id or op.machine_id, op.draft_start, op.draft_end) for op in q.all()]
+    else:
+        q = q.filter(models.Operation.planned_start != None)
+        ops = [(op.machine_id, op.planned_start, op.planned_end) for op in q.all()]
+
+    if not ops:
+        return {"machines": [], "date_range": {"start": None, "end": None}}
+
+    # 対象日付範囲
+    today = date_type.today()
+    date_range = [today + timedelta(days=i) for i in range(days)]
+
+    # 設備情報
+    machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == True,
+    ).all()
+    machine_map = {m.id: m for m in machines}
+
+    # 設備×日付 ごとの負荷時間を集計
+    load: dict[int, dict[date_type, float]] = {m.id: {} for m in machines}
+    for mid, start, end in ops:
+        if not start or not end or mid not in load:
+            continue
+        # 工程が各日に何時間かかるかを分割
+        cur = start
+        while cur < end:
+            d = cur.date()
+            if d in {d2 for d2 in date_range}:
+                next_day = datetime(d.year, d.month, d.day) + timedelta(days=1)
+                day_end = min(end, next_day)
+                h = (day_end - cur).total_seconds() / 3600
+                load[mid][d] = load[mid].get(d, 0.0) + h
+            cur = datetime(cur.year, cur.month, cur.day) + timedelta(days=1)
+            cur = cur.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    result = []
+    for m in machines:
+        cal = calendars.get(m.id)
+        days_data = []
+        for d in date_range:
+            if cal and cal._is_off_day(d):
+                capacity = 0.0
+            elif cal:
+                capacity = cal._day_hours(d)
+            else:
+                capacity = m.daily_capacity_hours or 8.0
+            load_h = round(load[m.id].get(d, 0.0), 2)
+            utilization = round(load_h / capacity, 3) if capacity > 0 else 0.0
+            days_data.append({
+                "date": d.isoformat(),
+                "load_hours": load_h,
+                "capacity_hours": capacity,
+                "utilization": min(utilization, 1.0),  # 100%上限
+                "over_capacity": load_h > capacity,
+            })
+        result.append({
+            "machine_id": m.id,
+            "name": m.name,
+            "code": m.code,
+            "is_outsource": m.is_outsource or False,
+            "days": days_data,
+        })
+
+    return {
+        "machines": result,
+        "date_range": {
+            "start": date_range[0].isoformat(),
+            "end": date_range[-1].isoformat(),
+        },
+    }
+
+
+@router.post("/operations/{operation_id}/lock")
+def toggle_lock(
+    operation_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """工程のスケジュールロックをトグルする。ロック済み→解除、未ロック→ロック。"""
+    op = db.query(models.Operation).filter(
+        models.Operation.id == operation_id,
+        models.Operation.tenant_id == tenant_id,
+    ).first()
+    if not op:
+        raise HTTPException(status_code=404, detail="工程が見つかりません")
+    if not op.planned_start:
+        raise HTTPException(status_code=400, detail="スケジュール済みの工程のみロックできます")
+
+    op.schedule_locked = not (getattr(op, "schedule_locked", False) or False)
+    db.commit()
+    return {"operation_id": operation_id, "schedule_locked": op.schedule_locked}
