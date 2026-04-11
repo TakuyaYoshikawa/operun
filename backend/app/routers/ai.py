@@ -611,6 +611,38 @@ def _build_agent_tools() -> list:
             "description": "現在の制約設定（設備グループ・メンテナンス枠・カレンダー例外・ロック済み工程）を日本語でわかりやすく説明する。",
             "input_schema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "create_machine",
+            "description": "新しい設備マスタを登録する。設備名・設備コード・設備タイプ・段取り時間・バッチ容量・外注フラグ等を指定できる。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name":               {"type": "string",  "description": "設備名（例：旋盤1号機）"},
+                    "code":               {"type": "string",  "description": "設備コード（例：LAT-001）"},
+                    "machine_type":       {"type": "string",  "description": "設備タイプ/グループ名（例：旋盤）。同じタイプの設備は自動で代替選択される"},
+                    "setup_time_minutes": {"type": "number",  "description": "段取り時間（分）。デフォルト0"},
+                    "batch_capacity":     {"type": "integer", "description": "バッチ同時処理数。デフォルト1"},
+                    "is_outsource":       {"type": "boolean", "description": "外注設備かどうか。デフォルトfalse"},
+                    "outsource_lead_days":{"type": "number",  "description": "外注リードタイム日数（is_outsource=trueの場合）"},
+                    "work_start_hour":    {"type": "integer", "description": "稼働開始時刻（時）。省略時はテナント設定を使用"},
+                },
+                "required": ["name", "code"],
+            },
+        },
+        {
+            "name": "create_process",
+            "description": "新しい工程マスタを登録する。工程名・工程コード・標準時間・対象設備を指定できる。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name":              {"type": "string", "description": "工程名（例：旋盤加工）"},
+                    "code":              {"type": "string", "description": "工程コード（例：PROC-001）"},
+                    "default_hours":     {"type": "number", "description": "標準作業時間（時間）"},
+                    "machine_type":      {"type": "string", "description": "対象設備タイプ（例：旋盤）"},
+                },
+                "required": ["name", "code"],
+            },
+        },
     ]
 
 
@@ -1105,6 +1137,62 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
                 {"operation_id": op.id, "order": op.order.order_number if op.order else "?", "sequence": op.sequence}
                 for op in locked_ops[:5]
             ],
+        }
+
+    if name == "create_machine":
+        existing = db.query(models.Machine).filter(
+            models.Machine.tenant_id == tenant_id,
+            models.Machine.code == params["code"],
+        ).first()
+        if existing:
+            return {"success": False, "message": f"設備コード '{params['code']}' は既に登録されています（{existing.name}）"}
+        machine = models.Machine(
+            tenant_id=tenant_id,
+            name=params["name"],
+            code=params["code"],
+            machine_type=params.get("machine_type"),
+            setup_time_minutes=params.get("setup_time_minutes", 0),
+            batch_capacity=params.get("batch_capacity", 1),
+            is_outsource=params.get("is_outsource", False),
+            outsource_lead_days=params.get("outsource_lead_days"),
+            work_start_hour=params.get("work_start_hour"),
+            is_active=True,
+        )
+        db.add(machine)
+        db.commit()
+        db.refresh(machine)
+        return {
+            "success": True,
+            "id": machine.id,
+            "name": machine.name,
+            "code": machine.code,
+            "machine_type": machine.machine_type,
+            "message": f"設備「{machine.name}」（{machine.code}）を登録しました",
+        }
+
+    if name == "create_process":
+        existing = db.query(models.Process).filter(
+            models.Process.tenant_id == tenant_id,
+            models.Process.code == params["code"],
+        ).first()
+        if existing:
+            return {"success": False, "message": f"工程コード '{params['code']}' は既に登録されています（{existing.name}）"}
+        process = models.Process(
+            tenant_id=tenant_id,
+            name=params["name"],
+            code=params["code"],
+            default_hours=params.get("default_hours"),
+            machine_type=params.get("machine_type"),
+        )
+        db.add(process)
+        db.commit()
+        db.refresh(process)
+        return {
+            "success": True,
+            "id": process.id,
+            "name": process.name,
+            "code": process.code,
+            "message": f"工程「{process.name}」（{process.code}）を登録しました",
         }
 
     if name == "run_schedule":
