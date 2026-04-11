@@ -8,37 +8,38 @@ from app.database import engine, Base, DATABASE_URL
 
 Base.metadata.create_all(bind=engine)
 
-# SQLite 用カラム追加マイグレーション（既存DBへの後付けカラム追加）
-# PostgreSQL（本番）では create_all が全カラムを正しく作成するためスキップ
-if "sqlite" in DATABASE_URL:
-    from sqlalchemy import text, inspect as sa_inspect
+# カラム追加マイグレーション（SQLite・PostgreSQL 両対応）
+# 既存テーブルへの後付けカラム追加を起動時に自動適用する
+from sqlalchemy import text, inspect as sa_inspect
 
-    def _add_column_if_missing(table: str, column: str, col_def: str):
-        inspector = sa_inspect(engine)
-        try:
-            cols = [col["name"] for col in inspector.get_columns(table)]
-        except Exception:
-            return  # テーブル未作成の場合は create_all に任せる
-        if column not in cols:
-            with engine.connect() as conn:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
-                conn.commit()
+def _add_column_if_missing(table: str, column: str, col_def_sqlite: str, col_def_pg: str | None = None):
+    """テーブルにカラムが存在しない場合のみ ALTER TABLE を実行する。"""
+    inspector = sa_inspect(engine)
+    try:
+        cols = [col["name"] for col in inspector.get_columns(table)]
+    except Exception:
+        return  # テーブル未作成の場合は create_all に任せる
+    if column not in cols:
+        col_def = col_def_pg if (col_def_pg and "sqlite" not in DATABASE_URL) else col_def_sqlite
+        with engine.connect() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+            conn.commit()
 
-    _add_column_if_missing("machines",   "machine_type",        "TEXT")
-    _add_column_if_missing("machines",   "is_outsource",        "BOOLEAN DEFAULT 0")
-    _add_column_if_missing("machines",   "outsource_supplier",  "TEXT")
-    _add_column_if_missing("machines",   "outsource_lead_days", "INTEGER DEFAULT 0")
-    _add_column_if_missing("operations", "machine_locked",      "BOOLEAN DEFAULT 0")
-    _add_column_if_missing("operations", "draft_start",         "DATETIME")
-    _add_column_if_missing("operations", "draft_end",           "DATETIME")
-    _add_column_if_missing("operations", "draft_machine_id",    "INTEGER")
-    _add_column_if_missing("machines",   "batch_capacity",      "INTEGER DEFAULT 1")
-    _add_column_if_missing("machines",   "work_start_hour",     "INTEGER")
-    _add_column_if_missing("operations", "wait_hours_after",    "FLOAT DEFAULT 0")
-    _add_column_if_missing("operations", "not_before_date",     "DATE")
-    _add_column_if_missing("operations", "schedule_locked",     "BOOLEAN DEFAULT 0")
-    _add_column_if_missing("tenant_settings", "saturday_off",   "BOOLEAN DEFAULT 0")
-    _add_column_if_missing("machines",        "sort_order",      "INTEGER DEFAULT 0")
+_add_column_if_missing("machines",        "machine_type",        "TEXT",                    "TEXT")
+_add_column_if_missing("machines",        "is_outsource",        "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
+_add_column_if_missing("machines",        "outsource_supplier",  "TEXT",                    "TEXT")
+_add_column_if_missing("machines",        "outsource_lead_days", "INTEGER DEFAULT 0",       "INTEGER DEFAULT 0")
+_add_column_if_missing("machines",        "batch_capacity",      "INTEGER DEFAULT 1",       "INTEGER DEFAULT 1")
+_add_column_if_missing("machines",        "work_start_hour",     "INTEGER",                 "INTEGER")
+_add_column_if_missing("machines",        "sort_order",          "INTEGER DEFAULT 0",       "INTEGER DEFAULT 0")
+_add_column_if_missing("operations",      "machine_locked",      "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
+_add_column_if_missing("operations",      "draft_start",         "DATETIME",                "TIMESTAMP")
+_add_column_if_missing("operations",      "draft_end",           "DATETIME",                "TIMESTAMP")
+_add_column_if_missing("operations",      "draft_machine_id",    "INTEGER",                 "INTEGER")
+_add_column_if_missing("operations",      "wait_hours_after",    "FLOAT DEFAULT 0",         "FLOAT DEFAULT 0")
+_add_column_if_missing("operations",      "not_before_date",     "DATE",                    "DATE")
+_add_column_if_missing("operations",      "schedule_locked",     "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
+_add_column_if_missing("tenant_settings", "saturday_off",        "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 
