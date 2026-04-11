@@ -216,23 +216,33 @@ def ai_agent(
 利用可能なツールを積極的に使ってユーザーの指示を実行してください。
 
 ## 利用可能な操作
+### 受注・在庫管理
 - 受注の検索・情報確認（search_orders）
-- **受注の納期・優先度・数量・ステータス・備考の変更（update_order）**
+- 受注の納期・優先度・数量・ステータス・備考の変更（update_order）
 - 新規受注の登録（create_order）
 - 材料在庫の確認・入出庫（search_materials, receive_stock, issue_stock）
 - 発注登録（create_purchase_order）
 - スケジュール状況確認（get_schedule_summary）
 - スケジュール再実行（run_schedule）
 
+### スケジューリング制約設定
+- 設備の検索（search_machines）
+- 設備の稼働状態変更（update_machine_status）
+- メンテナンス枠の登録（add_maintenance_window）
+- 工程制約の変更（update_operation_constraint）
+- カレンダー例外日の追加（add_calendar_exception）
+- 現在の制約設定を説明（explain_constraints）
+
 ## 操作ルール
-1. **読み取り操作**（search_orders等）は即座に実行してよい
-2. **書き込み操作**（update_order, create_order等）は実行前に変更内容をユーザーに提示して確認を取る
-   - 確認例：「ORD-005の納期を4/9→5/15に変更します。よろしいですか？」
-   - ユーザーが「はい」「お願い」「実行して」等と返答したら update_order を呼び出す
-3. 変更完了後は「納期: 4/9 → 5/15 に変更しました」のように変更前後を明示する
-4. 受注変更後は「スケジュールを再実行しますか？」と提案する
-5. 受注番号が不明な場合はまず search_orders で検索して確認する
-6. 日本語で簡潔に回答する"""
+1. **読み取り操作**（search_orders, search_machines, explain_constraints等）は即座に実行してよい
+2. **書き込み操作**は実行前に変更内容とその影響をユーザーに提示して確認を取る
+   - 確認例：「旋盤1号機を4/14〜4/18の間メンテナンス不可にします。影響受注数：X件。よろしいですか？」
+   - ユーザーが「はい」「お願い」「実行して」等と返答したら実行する
+3. 変更完了後は変更内容を明示し、スケジュール再実行を提案する
+4. 設備名が不明な場合はまず search_machines で検索する
+5. 受注番号が不明な場合はまず search_orders で検索する
+6. 制約変更後は explain_constraints でサマリーを表示する
+7. 日本語で簡潔に回答する"""
 
     tool_calls_log: list = []
     MAX_ITERATIONS = 6
@@ -423,6 +433,79 @@ def _build_agent_tools() -> list:
                     "optimizer": {"type": "string", "description": "ortools（デフォルト）またはedd"},
                 },
             },
+        },
+        # ── 制約設定ツール ──────────────────────────────────────────────
+        {
+            "name": "search_machines",
+            "description": "設備を検索・一覧取得する。設備名・コード・グループ（machine_type）で絞り込める。制約変更前に設備IDを確認するために使う。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "設備名やコードのキーワード（省略可）"},
+                    "include_inactive": {"type": "boolean", "description": "非稼働設備も含める場合true"},
+                },
+            },
+        },
+        {
+            "name": "update_machine_status",
+            "description": "設備の稼働状態（is_active）を変更する。故障・廃棄・復旧時に使う。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "machine_id": {"type": "integer", "description": "設備ID（search_machinesで確認）"},
+                    "is_active": {"type": "boolean", "description": "true=稼働中、false=停止"},
+                    "reason": {"type": "string", "description": "変更理由（任意）"},
+                },
+                "required": ["machine_id", "is_active"],
+            },
+        },
+        {
+            "name": "add_maintenance_window",
+            "description": "設備のメンテナンス枠を登録する。点検・修理期間中は自動的にその設備への割り付けを回避する。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "machine_id": {"type": "integer", "description": "設備ID（search_machinesで確認）"},
+                    "start_datetime": {"type": "string", "description": "開始日時（YYYY-MM-DDTHH:MM:SS形式）"},
+                    "end_datetime": {"type": "string", "description": "終了日時（YYYY-MM-DDTHH:MM:SS形式）"},
+                    "reason": {"type": "string", "description": "メンテナンス理由（例：月次点検、修理）"},
+                },
+                "required": ["machine_id", "start_datetime", "end_datetime"],
+            },
+        },
+        {
+            "name": "update_operation_constraint",
+            "description": "工程の制約を変更する。設備固定・待機時間・開始不可日・スケジュールロックを設定できる。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "operation_id": {"type": "integer", "description": "工程ID（search_ordersで受注を特定後、工程一覧から確認）"},
+                    "machine_locked": {"type": "boolean", "description": "true=設備固定（グループ内自動選択しない）"},
+                    "machine_id": {"type": "integer", "description": "固定先設備ID（machine_lockedをtrueにする場合に指定）"},
+                    "wait_hours_after": {"type": "number", "description": "工程完了後の待機時間（時間単位、例：8.0=8時間）"},
+                    "not_before_date": {"type": "string", "description": "開始不可日（YYYY-MM-DD、この日より前に開始しない）"},
+                    "schedule_locked": {"type": "boolean", "description": "true=スケジュール日時を固定（再スケジュールで変更しない）"},
+                },
+                "required": ["operation_id"],
+            },
+        },
+        {
+            "name": "add_calendar_exception",
+            "description": "工場カレンダーに例外日を追加する。全休日・半日稼働・特別稼働日を登録できる。複数日は複数回呼び出す。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "対象日（YYYY-MM-DD）"},
+                    "working_hours": {"type": "number", "description": "稼働時間（0=全休、4=半日、8=通常。小数可）"},
+                    "holiday_name": {"type": "string", "description": "名称（例：お盆休み、年末年始、創立記念日）"},
+                },
+                "required": ["date", "working_hours"],
+            },
+        },
+        {
+            "name": "explain_constraints",
+            "description": "現在の制約設定（設備グループ・メンテナンス枠・カレンダー例外・ロック済み工程）を日本語でわかりやすく説明する。",
+            "input_schema": {"type": "object", "properties": {}},
         },
     ]
 
@@ -686,8 +769,246 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
             "this_week_operations": len(week_ops),
         }
 
+    if name == "search_machines":
+        q = db.query(models.Machine).filter(models.Machine.tenant_id == tenant_id)
+        if not params.get("include_inactive"):
+            q = q.filter(models.Machine.is_active == True)
+        if params.get("keyword"):
+            kw = f"%{params['keyword']}%"
+            q = q.filter(
+                models.Machine.name.ilike(kw) | models.Machine.code.ilike(kw)
+            )
+        machines = q.order_by(models.Machine.id).all()
+        return {
+            "count": len(machines),
+            "machines": [
+                {
+                    "id": m.id, "name": m.name, "code": m.code,
+                    "machine_type": m.machine_type,
+                    "is_active": m.is_active, "is_outsource": m.is_outsource,
+                    "daily_capacity_hours": m.daily_capacity_hours,
+                    "batch_capacity": m.batch_capacity,
+                    "setup_time_minutes": m.setup_time_minutes,
+                }
+                for m in machines
+            ],
+        }
+
+    if name == "update_machine_status":
+        machine = db.query(models.Machine).filter(
+            models.Machine.id == params["machine_id"],
+            models.Machine.tenant_id == tenant_id,
+        ).first()
+        if not machine:
+            return {"error": f"設備ID {params['machine_id']} が見つかりません"}
+        before = machine.is_active
+        machine.is_active = params["is_active"]
+        db.commit()
+        # 影響を受ける工程数
+        affected = db.query(models.Operation).filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.machine_id == machine.id,
+            models.Operation.planned_start.isnot(None),
+        ).count()
+        return {
+            "success": True,
+            "machine_name": machine.name,
+            "before": "稼働中" if before else "停止中",
+            "after": "稼働中" if params["is_active"] else "停止中",
+            "affected_operations": affected,
+            "message": f"{machine.name} を{'稼働中' if params['is_active'] else '停止中'}に変更しました。影響工程数: {affected}件",
+        }
+
+    if name == "add_maintenance_window":
+        machine = db.query(models.Machine).filter(
+            models.Machine.id == params["machine_id"],
+            models.Machine.tenant_id == tenant_id,
+        ).first()
+        if not machine:
+            return {"error": f"設備ID {params['machine_id']} が見つかりません"}
+        from datetime import datetime as dt
+        start = dt.fromisoformat(params["start_datetime"])
+        end = dt.fromisoformat(params["end_datetime"])
+        if end <= start:
+            return {"error": "終了日時は開始日時より後にしてください"}
+        mw = models.MachineMaintenance(
+            tenant_id=tenant_id,
+            machine_id=machine.id,
+            start_datetime=start,
+            end_datetime=end,
+            reason=params.get("reason"),
+        )
+        db.add(mw)
+        db.commit()
+        db.refresh(mw)
+        # 期間中に予定されている工程数
+        ops_in_window = db.query(models.Operation).filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.machine_id == machine.id,
+            models.Operation.planned_start < end,
+            models.Operation.planned_end > start,
+        ).count()
+        return {
+            "success": True,
+            "id": mw.id,
+            "machine_name": machine.name,
+            "start": params["start_datetime"],
+            "end": params["end_datetime"],
+            "reason": params.get("reason"),
+            "ops_in_window": ops_in_window,
+            "message": f"{machine.name} に {start.strftime('%m/%d %H:%M')}〜{end.strftime('%m/%d %H:%M')} のメンテナンス枠を登録しました。期間中の予定工程: {ops_in_window}件",
+        }
+
+    if name == "update_operation_constraint":
+        op = db.query(models.Operation).filter(
+            models.Operation.id == params["operation_id"],
+            models.Operation.tenant_id == tenant_id,
+        ).first()
+        if not op:
+            return {"error": f"工程ID {params['operation_id']} が見つかりません"}
+
+        changes = {}
+        if "machine_locked" in params:
+            op.machine_locked = params["machine_locked"]
+            changes["machine_locked"] = params["machine_locked"]
+        if "machine_id" in params:
+            machine = db.query(models.Machine).filter(
+                models.Machine.id == params["machine_id"],
+                models.Machine.tenant_id == tenant_id,
+            ).first()
+            if not machine:
+                return {"error": f"設備ID {params['machine_id']} が見つかりません"}
+            op.machine_id = params["machine_id"]
+            changes["machine_id"] = f"{machine.name}（ID:{machine.id}）"
+        if "wait_hours_after" in params:
+            op.wait_hours_after = params["wait_hours_after"]
+            changes["wait_hours_after"] = f"{params['wait_hours_after']}時間"
+        if "not_before_date" in params:
+            op.not_before_date = date.fromisoformat(params["not_before_date"])
+            changes["not_before_date"] = params["not_before_date"]
+        if "schedule_locked" in params:
+            op.schedule_locked = params["schedule_locked"]
+            changes["schedule_locked"] = params["schedule_locked"]
+
+        if not changes:
+            return {"error": "変更する制約が指定されていません"}
+
+        db.commit()
+        order_num = op.order.order_number if op.order else "不明"
+        return {
+            "success": True,
+            "operation_id": op.id,
+            "order_number": order_num,
+            "sequence": op.sequence,
+            "changes": changes,
+            "message": f"{order_num} 工程{op.sequence} の制約を更新しました: {changes}",
+        }
+
+    if name == "add_calendar_exception":
+        target_date = date.fromisoformat(params["date"])
+        # 重複確認（同日があれば更新）
+        existing = db.query(models.CalendarHoliday).filter(
+            models.CalendarHoliday.tenant_id == tenant_id,
+            models.CalendarHoliday.date == target_date,
+        ).first()
+        hours = params["working_hours"]
+        name_label = params.get("holiday_name", "例外日")
+        if existing:
+            before_hours = existing.working_hours
+            existing.working_hours = hours
+            existing.holiday_name = name_label
+            db.commit()
+            kind = "全休" if hours == 0 else f"稼働{hours}時間"
+            return {
+                "success": True, "updated": True,
+                "date": params["date"], "working_hours": hours, "holiday_name": name_label,
+                "message": f"{params['date']} を {kind}（{name_label}）に更新しました（旧: {before_hours}時間）",
+            }
+        holiday = models.CalendarHoliday(
+            tenant_id=tenant_id,
+            date=target_date,
+            working_hours=hours,
+            holiday_name=name_label,
+        )
+        db.add(holiday)
+        db.commit()
+        kind = "全休" if hours == 0 else f"稼働{hours}時間"
+        return {
+            "success": True, "created": True,
+            "date": params["date"], "working_hours": hours, "holiday_name": name_label,
+            "message": f"{params['date']} を {kind}（{name_label}）に設定しました",
+        }
+
+    if name == "explain_constraints":
+        from datetime import datetime as dt
+        now = dt.now()
+        # 設備グループ
+        machines = db.query(models.Machine).filter(
+            models.Machine.tenant_id == tenant_id,
+            models.Machine.is_active == True,
+        ).all()
+        inactive_machines = db.query(models.Machine).filter(
+            models.Machine.tenant_id == tenant_id,
+            models.Machine.is_active == False,
+        ).all()
+        groups: dict = {}
+        for m in machines:
+            if m.machine_type:
+                groups.setdefault(m.machine_type, []).append(m.name)
+        # メンテナンス枠（未来のもの）
+        maint_list = db.query(models.MachineMaintenance).filter(
+            models.MachineMaintenance.tenant_id == tenant_id,
+            models.MachineMaintenance.end_datetime >= now,
+        ).order_by(models.MachineMaintenance.start_datetime).all()
+        maint_map = {m.id: m.name for m in db.query(models.Machine).filter(
+            models.Machine.tenant_id == tenant_id,
+        ).all()}
+        # カレンダー例外（今後3ヶ月）
+        future = date.today() + timedelta(days=90)
+        holidays = db.query(models.CalendarHoliday).filter(
+            models.CalendarHoliday.tenant_id == tenant_id,
+            models.CalendarHoliday.date >= date.today(),
+            models.CalendarHoliday.date <= future,
+        ).order_by(models.CalendarHoliday.date).all()
+        # ロック済み工程
+        locked_ops = db.query(models.Operation).filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.schedule_locked == True,
+        ).all()
+        return {
+            "machine_groups": {k: v for k, v in groups.items()},
+            "inactive_machines": [m.name for m in inactive_machines],
+            "upcoming_maintenance": [
+                {
+                    "machine": maint_map.get(mw.machine_id, f"ID:{mw.machine_id}"),
+                    "start": mw.start_datetime.strftime("%Y/%m/%d %H:%M"),
+                    "end": mw.end_datetime.strftime("%Y/%m/%d %H:%M"),
+                    "reason": mw.reason,
+                }
+                for mw in maint_list
+            ],
+            "calendar_exceptions": [
+                {
+                    "date": str(h.date),
+                    "working_hours": h.working_hours,
+                    "name": h.holiday_name,
+                    "type": "全休" if h.working_hours == 0 else f"短縮稼働({h.working_hours}h)",
+                }
+                for h in holidays
+            ],
+            "locked_operations_count": len(locked_ops),
+            "locked_operations": [
+                {"operation_id": op.id, "order": op.order.order_number if op.order else "?", "sequence": op.sequence}
+                for op in locked_ops[:5]
+            ],
+        }
+
     if name == "run_schedule":
-        from app.scheduler.ortools_engine import ORToolsSchedulingEngine
+        try:
+            from app.scheduler.ortools_engine import ORToolsSchedulingEngine
+            _ortools_ok = True
+        except Exception:
+            _ortools_ok = False
         from app.scheduler.engine import SchedulingEngine, OperationInput, MachineCalendar
         optimizer = params.get("optimizer", "ortools")
         machines = db.query(models.Machine).filter(
@@ -701,7 +1022,7 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
         non_working = [h.date for h in holidays]
         calendars = {m.id: MachineCalendar(m.id, m.daily_capacity_hours, non_working_days=non_working)
                      for m in machines}
-        engine = ORToolsSchedulingEngine(calendars) if optimizer == "ortools" else SchedulingEngine(calendars)
+        engine = ORToolsSchedulingEngine(calendars) if (optimizer == "ortools" and _ortools_ok) else SchedulingEngine(calendars)
         ops_db = (
             db.query(models.Operation)
             .join(models.Order)
