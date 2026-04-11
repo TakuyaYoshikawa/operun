@@ -886,14 +886,6 @@ export default function GanttPage() {
   const machineTypeMap = new Map(tasks.map(t => [t.resource, t.machine_type]))
   const machineIdMap   = new Map(tasks.map(t => [t.resource, t.machine_id]))
 
-  // DnDハンドラが参照する最新値をrefに同期
-  gsRef.current = {
-    machines, machineTypeMap, machineIdMap,
-    viewMode, dayWidth, minDate, days,
-    WORK_START, WORK_HOURS, hourWidth, rowHeight,
-    hasDraft, toWorkingX,
-  }
-
   // 時間モード: 稼働時間内のオフセット計算
   const toWorkingX = (dt: Date): number => {
     const dayIdx = Math.floor((new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime()
@@ -901,6 +893,14 @@ export default function GanttPage() {
     const h = dt.getHours() + dt.getMinutes() / 60
     const clampedH = Math.max(WORK_START, Math.min(WORK_START + WORK_HOURS, h))
     return dayIdx * dayWidth + (clampedH - WORK_START) * hourWidth
+  }
+
+  // DnDハンドラが参照する最新値をrefに同期
+  gsRef.current = {
+    machines, machineTypeMap, machineIdMap,
+    viewMode, dayWidth, minDate, days,
+    WORK_START, WORK_HOURS, hourWidth, rowHeight,
+    hasDraft, toWorkingX,
   }
 
   // オーダー凡例（最大12件）
