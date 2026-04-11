@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi } from '../api/orders'
 import { machinesApi } from '../api/machines'
@@ -643,7 +643,7 @@ export default function OrdersPage() {
                 const isExpanded = expandedId === o.id
                 const customerName = customerItems.find(c => c.id === o.customer_id)?.name
                 return (
-                  <tbody key={o.id}>
+                  <React.Fragment key={o.id}>
                     <tr
                       className={`border-t border-gray-100 cursor-pointer transition-colors ${
                         isExpanded ? 'bg-blue-50' : 'hover:bg-gray-50'
@@ -682,7 +682,7 @@ export default function OrdersPage() {
                         </td>
                       </tr>
                     )}
-                  </tbody>
+                  </React.Fragment>
                 )
               })}
             </tbody>
