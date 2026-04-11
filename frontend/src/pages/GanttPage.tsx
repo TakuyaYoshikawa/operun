@@ -521,6 +521,7 @@ export default function GanttPage() {
   const [detailTask, setDetailTask] = useState<GanttTask | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [tabMode, setTabMode] = useState<TabMode>('gantt')
+  const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
 
   // ── DnD ─────────────────────────────────────────────────────────────────────
   type GhostState = {
@@ -845,16 +846,14 @@ export default function GanttPage() {
               >下書き ✏️</button>
             </div>
           )}
-          {/* 下書き作成（現行スケジュールをそのまま下書きへ） */}
-          {!hasDraft && (
-            <button
-              onClick={() => createDraftMut.mutate()}
-              disabled={createDraftMut.isPending}
-              className="border border-yellow-400 text-yellow-700 bg-yellow-50 px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-100 disabled:opacity-60"
-            >
-              {createDraftMut.isPending ? '作成中...' : '✏️ 下書き作成'}
-            </button>
-          )}
+          {/* 現行スケジュールをコピーして下書き作成（常時表示） */}
+          <button
+            onClick={() => hasDraft ? setConfirmCopyOpen(true) : createDraftMut.mutate()}
+            disabled={createDraftMut.isPending}
+            className="border border-yellow-400 text-yellow-700 bg-yellow-50 px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-100 disabled:opacity-60"
+          >
+            {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
+          </button>
           {/* ガント/負荷グラフ 切替 */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
             <button
@@ -894,9 +893,17 @@ export default function GanttPage() {
       {viewDraft && hasDraft && (
         <div className={`mb-4 border rounded-xl px-4 py-3 flex items-center justify-between gap-4 ${DRAFT_BANNER_CLASS}`}>
           <div className="text-sm font-medium">
-            ✏️ 下書き編集中。バーをドラッグして移動、クリックして詳細編集できます。確認後「確定」で反映してください。
+            ✏️ 下書き編集中。バーをドラッグして移動、クリックして詳細編集できます。
           </div>
-          <div className="flex gap-2 flex-shrink-0">
+          <div className="flex gap-2 flex-shrink-0 flex-wrap">
+            <button
+              onClick={() => setConfirmCopyOpen(true)}
+              disabled={createDraftMut.isPending || discardMut.isPending || commitMut.isPending}
+              className="px-3 py-1.5 border border-yellow-300 bg-white text-yellow-600 rounded-lg text-sm hover:bg-yellow-50 disabled:opacity-50"
+              title="現行スケジュールをコピーして下書きをやり直す"
+            >
+              現行に戻す
+            </button>
             <button
               onClick={() => discardMut.mutate()}
               disabled={discardMut.isPending || commitMut.isPending}
@@ -1281,6 +1288,42 @@ export default function GanttPage() {
           onClose={() => setDetailTask(null)}
           onChanged={invalidate}
         />
+      )}
+
+      {/* 現行スケジュールからコピー確認ダイアログ */}
+      {confirmCopyOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setConfirmCopyOpen(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-5">
+            <h3 className="text-base font-bold text-gray-800 mb-2">現行スケジュールをコピー</h3>
+            <p className="text-sm text-gray-600 mb-1">
+              確定済みの現行スケジュールをそのままコピーして、下書きとして編集できます。
+            </p>
+            {hasDraft && (
+              <p className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 mb-4">
+                ⚠️ 現在の下書き編集内容は破棄されます。
+              </p>
+            )}
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => setConfirmCopyOpen(false)}
+                className="flex-1 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmCopyOpen(false)
+                  createDraftMut.mutate()
+                }}
+                disabled={createDraftMut.isPending}
+                className="flex-1 bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-600 disabled:opacity-60"
+              >
+                コピーして編集開始
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
