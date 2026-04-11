@@ -142,7 +142,7 @@ function OpsEditor({ order, onChanged }: { order: Order; onChanged: () => void }
           <input required type="number" min={0.5} step={0.5} value={opForm.duration_hours} onChange={e => setOpForm(f => ({ ...f, duration_hours: Number(e.target.value) }))} className="w-16 border border-gray-300 rounded px-2 py-1 text-xs" />
         </div>
         <div>
-          <label className="block text-[10px] text-gray-400 mb-1">待機(h)</label>
+          <label className="block text-[10px] text-gray-400 mb-1">完了後待機(h)</label>
           <input type="number" min={0} step={0.5} value={opForm.wait_hours_after ?? 0} onChange={e => setOpForm(f => ({ ...f, wait_hours_after: Number(e.target.value) }))} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs" />
         </div>
         <div>

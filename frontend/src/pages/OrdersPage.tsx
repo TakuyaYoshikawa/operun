@@ -230,7 +230,7 @@ function OperationsEditor({ order }: { order: Order }) {
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">待機時間(h)</label>
+          <label className="block text-xs text-gray-500 mb-1">完了後待機(h)</label>
           <input
             type="number" min={0} step={0.5}
             value={opForm.wait_hours_after ?? 0}
