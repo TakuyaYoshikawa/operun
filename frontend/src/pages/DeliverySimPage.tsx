@@ -38,8 +38,6 @@ export default function DeliverySimPage() {
     return Array.from(seen.entries()).map(([type, ms]) => ({ type, machines: ms }))
   })()
 
-  const machineName = (id: number) => machines?.find(m => m.id === id)?.name ?? `設備#${id}`
-
   const sim = useMutation({
     mutationFn: scheduleApi.simulateDelivery,
     onSuccess: data => { setResult(data.data); setExplanation(null) },
