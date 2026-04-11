@@ -469,9 +469,9 @@ def simulate_new_order(
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    engine = _build_engine(db, tenant_id)
+    engine = SchedulingEngine(_build_calendars(db, tenant_id))
     existing = _build_operation_inputs(db, tenant_id)
-    return engine.simulate_insert(new_op, existing)
+    return engine.simulate_insert([new_op], existing)
 
 
 def _calc_business_days(start: datetime, end: datetime) -> int:
@@ -536,7 +536,7 @@ def check_delivery_date(
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    engine_obj = _build_engine(db, tenant_id)
+    engine_obj = SchedulingEngine(_build_calendars(db, tenant_id))
     existing = _build_operation_inputs(db, tenant_id)
     result = engine_obj.simulate_insert(new_ops, existing)
 
