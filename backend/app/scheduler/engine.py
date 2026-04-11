@@ -302,21 +302,23 @@ class SchedulingEngine:
 
     def simulate_insert(
         self,
-        new_op: OperationInput,
+        new_ops: List[OperationInput],
         existing_ops: List[OperationInput]
     ) -> Dict:
         """
-        新規受注を差し込んだ場合の影響をシミュレーション。
-        納期シミュレーション機能（Phase 2）で使用。
+        新規受注（複数工程可）を差し込んだ場合の影響をシミュレーション。
+        納期シミュレーション機能（F-05）で使用。
         """
-        all_ops = existing_ops + [new_op]
+        sim_order_id = new_ops[0].order_id if new_ops else -1
+        all_ops = existing_ops + new_ops
         # エンジンをリセットして再計算
         engine = SchedulingEngine(self.calendars)
         new_schedule = engine.schedule(all_ops)
 
-        new_result = next(
-            (r for r in new_schedule if r.order_id == new_op.order_id), None
-        )
+        # 新規受注の最終工程（最大 sequence）の完了日時を完成予定とする
+        new_results = [r for r in new_schedule if r.order_id == sim_order_id]
+        new_result = max(new_results, key=lambda r: r.sequence) if new_results else None
+
         delayed = [r for r in new_schedule if r.is_delayed]
 
         return {
@@ -324,4 +326,13 @@ class SchedulingEngine:
             "new_order_delayed": new_result.is_delayed if new_result else None,
             "total_delayed_orders": len(delayed),
             "delayed_order_numbers": [r.order_number for r in delayed],
+            "operations": [
+                {
+                    "sequence": r.sequence,
+                    "machine_id": r.machine_id,
+                    "planned_start": r.planned_start.isoformat() if r.planned_start else None,
+                    "planned_end": r.planned_end.isoformat() if r.planned_end else None,
+                }
+                for r in sorted(new_results, key=lambda r: r.sequence)
+            ],
         }

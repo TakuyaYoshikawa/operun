@@ -497,28 +497,55 @@ def check_delivery_date(
     db: Session = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """F-05 納期回答支援。"""
+    """F-05 納期回答支援（複数工程対応）。"""
     try:
-        new_op = OperationInput(
-            order_id=-1,
-            order_number="(試算)",
-            product_name=payload.get("product_name", "新規"),
-            sequence=1,
-            machine_id=payload["machine_id"],
-            duration_hours=payload["duration_hours"],
-            due_date=date.fromisoformat(payload["due_date"]),
-            priority=payload.get("priority", 3),
-            is_urgent=payload.get("is_urgent", False),
-        )
+        product_name = payload.get("product_name", "新規")
+        due_date_str = payload["due_date"]
+        due = date.fromisoformat(due_date_str)
+        priority = payload.get("priority", 3)
+        is_urgent = payload.get("is_urgent", False)
+
+        # operations リスト形式（新形式）と単一 machine_id（後方互換）の両対応
+        raw_ops = payload.get("operations")
+        if not raw_ops:
+            # 旧形式: machine_id / duration_hours がトップレベルにある場合
+            raw_ops = [{"machine_id": payload["machine_id"], "duration_hours": payload["duration_hours"]}]
+
+        if not raw_ops:
+            raise HTTPException(status_code=422, detail="operations は1件以上必要です")
+
+        new_ops = []
+        for i, op in enumerate(raw_ops):
+            new_ops.append(OperationInput(
+                order_id=-1,
+                order_number="(試算)",
+                product_name=product_name,
+                sequence=i + 1,
+                machine_id=int(op["machine_id"]),
+                duration_hours=float(op["duration_hours"]),
+                due_date=due,
+                priority=priority,
+                is_urgent=op.get("is_urgent", is_urgent),
+            ))
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    engine = _build_engine(db, tenant_id)
+    engine_obj = _build_engine(db, tenant_id)
     existing = _build_operation_inputs(db, tenant_id)
-    result = engine.simulate_insert(new_op, existing)
+    result = engine_obj.simulate_insert(new_ops, existing)
 
     completion: datetime | None = result["new_order_completion"]
     feasible = completion is not None
+
+    # 設備名を付与
+    machine_map = {m.id: m.name for m in db.query(models.Machine).filter(models.Machine.tenant_id == tenant_id).all()}
+    op_details = [
+        {
+            **op,
+            "machine_name": machine_map.get(op["machine_id"], f"設備#{op['machine_id']}"),
+        }
+        for op in result.get("operations", [])
+    ]
 
     return {
         "feasible": feasible,
@@ -528,6 +555,7 @@ def check_delivery_date(
         "on_time": result.get("new_order_delayed") is False if feasible else None,
         "affected_orders": result["delayed_order_numbers"],
         "affected_count": result["total_delayed_orders"],
+        "operations": op_details,
     }
 
 

@@ -40,6 +40,14 @@ export interface LoadChartData {
   date_range: { start: string; end: string }
 }
 
+export interface DeliverySimOperation {
+  sequence: number
+  machine_id: number
+  machine_name: string
+  planned_start: string | null
+  planned_end: string | null
+}
+
 export interface DeliverySimResult {
   feasible: boolean
   completion_date: string | null
@@ -48,6 +56,7 @@ export interface DeliverySimResult {
   on_time: boolean | null
   affected_orders: string[]
   affected_count: number
+  operations: DeliverySimOperation[]
 }
 
 export const scheduleApi = {
@@ -60,11 +69,10 @@ export const scheduleApi = {
     api.patch<{ ok: boolean }>(`/schedule/draft/${opId}`, payload),
   simulateDelivery: (payload: {
     product_name: string
-    machine_id: number
-    duration_hours: number
     due_date: string
     priority: number
     is_urgent: boolean
+    operations: { machine_id: number; duration_hours: number; is_urgent?: boolean }[]
   }) => api.post<DeliverySimResult>('/schedule/simulate/delivery', payload),
   getLoadChart: (days = 21, draft = false) =>
     api.get<LoadChartData>('/schedule/load', { params: { days, draft } }),

@@ -5,26 +5,45 @@ import { scheduleApi } from '../api/schedule'
 import type { DeliverySimResult } from '../api/schedule'
 import { aiApi } from '../api/ai'
 
+interface SimOp {
+  machine_id: number
+  duration_hours: number
+}
+
+const emptyOp: SimOp = { machine_id: 0, duration_hours: 1 }
+
 export default function DeliverySimPage() {
   const { data: machines } = useQuery({
     queryKey: ['machines'],
     queryFn: () => machinesApi.list({ is_active: true }).then(r => r.data),
   })
 
-  const [form, setForm] = useState({
-    product_name: '',
-    machine_id: 0,
-    duration_hours: 8,
-    due_date: '',
-    priority: 3,
-    is_urgent: false,
-  })
+  const [productName, setProductName] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [priority, setPriority] = useState(3)
+  const [ops, setOps] = useState<SimOp[]>([{ ...emptyOp }])
+
   const [result, setResult] = useState<DeliverySimResult | null>(null)
   const [explanation, setExplanation] = useState<string | null>(null)
+
+  // 設備を machine_type でグループ化
+  const machineGroups = (() => {
+    if (!machines) return []
+    const seen = new Map<string | null, typeof machines>()
+    for (const m of machines) {
+      const key = m.machine_type
+      if (!seen.has(key)) seen.set(key, [])
+      seen.get(key)!.push(m)
+    }
+    return Array.from(seen.entries()).map(([type, ms]) => ({ type, machines: ms }))
+  })()
+
+  const machineName = (id: number) => machines?.find(m => m.id === id)?.name ?? `設備#${id}`
 
   const sim = useMutation({
     mutationFn: scheduleApi.simulateDelivery,
     onSuccess: data => { setResult(data.data); setExplanation(null) },
+    onError: () => alert('シミュレーションに失敗しました'),
   })
 
   const explain = useMutation({
@@ -33,10 +52,32 @@ export default function DeliverySimPage() {
     onSuccess: data => setExplanation(data.data.message),
   })
 
+  const updateOp = (i: number, patch: Partial<SimOp>) =>
+    setOps(prev => prev.map((op, idx) => idx === i ? { ...op, ...patch } : op))
+
+  const addOp = () => setOps(prev => [...prev, { ...emptyOp }])
+  const removeOp = (i: number) => setOps(prev => prev.filter((_, idx) => idx !== i))
+
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (ops.some(op => op.machine_id === 0)) {
+      alert('全ての工程で設備を選択してください')
+      return
+    }
     setResult(null)
-    sim.mutate({ ...form, machine_id: Number(form.machine_id) })
+    sim.mutate({
+      product_name: productName,
+      due_date: dueDate,
+      priority,
+      is_urgent: priority === 1,
+      operations: ops,
+    })
+  }
+
+  const formatTime = (iso: string | null) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
   return (
@@ -45,48 +86,92 @@ export default function DeliverySimPage() {
       <p className="text-sm text-gray-500 mb-6">新規受注を差し込んだ場合の完成予定日を即答します</p>
 
       <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
+
+          {/* 品名 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">品名</label>
             <input
-              value={form.product_name}
-              onChange={e => setForm(f => ({ ...f, product_name: e.target.value }))}
+              value={productName}
+              onChange={e => setProductName(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               placeholder="部品A"
             />
           </div>
+
+          {/* 工程リスト */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">使用設備 *</label>
-            <select
-              required
-              value={form.machine_id}
-              onChange={e => setForm(f => ({ ...f, machine_id: Number(e.target.value) }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            >
-              <option value={0} disabled>設備を選択してください</option>
-              {machines?.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700">
+                工程 <span className="text-gray-400 font-normal text-xs ml-1">— 上から順に加工します</span>
+              </label>
+              <button
+                type="button"
+                onClick={addOp}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+              >
+                ＋ 工程を追加
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {ops.map((op, i) => (
+                <div key={i} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                  <span className="w-5 h-5 rounded-full bg-gray-300 text-white text-xs flex items-center justify-center flex-shrink-0">
+                    {i + 1}
+                  </span>
+
+                  <select
+                    required
+                    value={op.machine_id}
+                    onChange={e => updateOp(i, { machine_id: Number(e.target.value) })}
+                    className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                  >
+                    <option value={0} disabled>設備を選択</option>
+                    {machineGroups.map(({ type, machines: ms }) =>
+                      type
+                        ? <optgroup key={type} label={type}>
+                            {ms.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </optgroup>
+                        : ms.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                    )}
+                  </select>
+
+                  <div className="flex items-center gap-1">
+                    <input
+                      required type="number" min={0.5} step={0.5}
+                      value={op.duration_hours}
+                      onChange={e => updateOp(i, { duration_hours: Number(e.target.value) })}
+                      className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center"
+                    />
+                    <span className="text-xs text-gray-400">h</span>
+                  </div>
+
+                  {ops.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeOp(i)}
+                      className="text-red-300 hover:text-red-500 text-lg leading-none flex-shrink-0"
+                      title="この工程を削除"
+                    >×</button>
+                  )}
+                </div>
               ))}
-            </select>
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">所要時間（時間） *</label>
-            <input
-              required type="number" min={0.5} step={0.5}
-              value={form.duration_hours}
-              onChange={e => setForm(f => ({ ...f, duration_hours: Number(e.target.value) }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
+
+          {/* 希望納期 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">希望納期</label>
             <input
               type="date"
-              value={form.due_date}
-              onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
+              value={dueDate}
+              onChange={e => setDueDate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </div>
+
+          {/* 優先度 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">優先度</label>
             <div className="flex gap-4">
@@ -94,8 +179,8 @@ export default function DeliverySimPage() {
                 <label key={v} className="flex items-center gap-2 text-sm cursor-pointer">
                   <input
                     type="radio" name="priority" value={v}
-                    checked={form.priority === v}
-                    onChange={() => setForm(f => ({ ...f, priority: v, is_urgent: v === 1 }))}
+                    checked={priority === v}
+                    onChange={() => setPriority(v)}
                     className="accent-blue-600"
                   />
                   <span className={v === 1 ? 'text-red-600 font-medium' : ''}>{l}</span>
@@ -116,11 +201,19 @@ export default function DeliverySimPage() {
 
       {/* 結果 */}
       {result && (
-        <div className={`mt-6 rounded-xl p-6 border shadow-sm ${result.feasible ? (result.on_time ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200') : 'bg-red-50 border-red-200'}`}>
+        <div className={`mt-6 rounded-xl p-6 border shadow-sm ${
+          result.feasible
+            ? (result.on_time ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200')
+            : 'bg-red-50 border-red-200'
+        }`}>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-2xl">{result.feasible ? (result.on_time ? '✅' : '⚠️') : '❌'}</span>
+            <span className="text-2xl">
+              {result.feasible ? (result.on_time ? '✅' : '⚠️') : '❌'}
+            </span>
             <span className="text-lg font-bold text-gray-800">
-              {result.feasible ? (result.on_time ? '受注可能（納期内）' : '受注可能（納期超過）') : '受注不可'}
+              {result.feasible
+                ? (result.on_time ? '受注可能（納期内）' : '受注可能（納期超過）')
+                : '受注不可'}
             </span>
           </div>
 
@@ -134,6 +227,23 @@ export default function DeliverySimPage() {
                 <span className="text-gray-600">所要日数</span>
                 <span className="font-semibold text-gray-800">{result.business_days} 営業日</span>
               </div>
+            </div>
+          )}
+
+          {/* 工程ごとの予定 */}
+          {result.operations && result.operations.length > 0 && (
+            <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 mb-4">
+              {result.operations.map(op => (
+                <div key={op.sequence} className="flex items-center gap-3 px-3 py-2 text-sm">
+                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs flex items-center justify-center flex-shrink-0">
+                    {op.sequence}
+                  </span>
+                  <span className="font-medium text-gray-700 flex-1">{op.machine_name}</span>
+                  <span className="text-gray-400 text-xs">
+                    {formatTime(op.planned_start)} 〜 {formatTime(op.planned_end)}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 
