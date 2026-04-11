@@ -120,7 +120,7 @@ function GanttBar({
         left,
         width,
         backgroundColor: color,
-        opacity: isDone ? 0.5 : isDragging ? 0.3 : 1,
+        opacity: isDone ? 0.5 : isDragging ? 0 : 1,
         outline: task.is_delayed ? '2px solid #ef4444' : (draftMode ? '1.5px dashed rgba(255,255,255,0.6)' : undefined),
         outlineOffset: task.is_delayed ? '-1px' : undefined,
         cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
@@ -1210,7 +1210,7 @@ export default function GanttPage() {
                             onClick={() => handleBarClick(t)}
                             onMouseDown={draggable ? e => handleBarMouseDown(t, e) : undefined}
                             style={{ left, width, backgroundColor: color,
-                              opacity: isDone ? 0.5 : isDragging ? 0.3 : 1,
+                              opacity: isDone ? 0.5 : isDragging ? 0 : 1,
                               cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
                               outline: t.is_delayed ? '2px solid #ef4444' : (viewDraft ? '1.5px dashed rgba(255,255,255,0.6)' : undefined),
                               outlineOffset: t.is_delayed ? '-1px' : undefined,
