@@ -4,6 +4,8 @@ import { scheduleApi } from '../api/schedule'
 import { machinesApi } from '../api/machines'
 import { settingsApi } from '../api/settings'
 import { operationsApi } from '../api/operations'
+import { aiApi } from '../api/ai'
+import type { ChatMessage } from '../api/ai'
 import type { GanttTask, MachineLoad } from '../api/schedule'
 
 const DRAFT_BANNER_CLASS = 'bg-yellow-50 border-yellow-300 text-yellow-800'
@@ -226,6 +228,189 @@ function LoadChart({ data }: { data: MachineLoad[]; days?: number }) {
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block"/> 高負荷(≥85%)</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-400 inline-block"/> 中(≥50%)</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-200 inline-block"/> 低(&lt;50%)</span>
+      </div>
+    </div>
+  )
+}
+
+// ── AIアシスタント（制約調整チャット） ───────────────────────────────────────
+
+const QUICK_PROMPTS = [
+  '現在のスケジュール状況を教えて',
+  'メンテナンスの予定を確認したい',
+  '稼働設備の一覧を見せて',
+  'ロック中の工程を解除したい',
+]
+
+function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void }) {
+  const qc = useQueryClient()
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [input, setInput] = useState('')
+  const [toolLog, setToolLog] = useState<{ tool: string; label: string }[]>([])
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const MUTATING_TOOLS = new Set([
+    'add_maintenance', 'delete_maintenance', 'update_machine_status',
+    'add_calendar_exception', 'delete_calendar_exception',
+    'toggle_operation_lock', 'update_machine_daily_hours',
+    'update_machine_saturday_off',
+  ])
+
+  const TOOL_LABEL: Record<string, string> = {
+    get_schedule_summary: 'スケジュール確認',
+    get_constraints_summary: '制約確認',
+    search_machines: '設備検索',
+    get_machine_detail: '設備詳細取得',
+    add_maintenance: 'メンテナンス追加',
+    delete_maintenance: 'メンテナンス削除',
+    update_machine_status: '設備状態変更',
+    add_calendar_exception: 'カレンダー例外追加',
+    delete_calendar_exception: 'カレンダー例外削除',
+    toggle_operation_lock: '工程ロック切替',
+    update_machine_daily_hours: '稼働時間変更',
+    update_machine_saturday_off: '土曜稼働変更',
+  }
+
+  const sendMut = useMutation({
+    mutationFn: (msgs: ChatMessage[]) => aiApi.agent(msgs),
+    onSuccess: (res, msgs) => {
+      setMessages([...msgs, { role: 'assistant', content: res.data.reply }])
+      const calls = res.data.tool_calls ?? []
+      if (calls.length > 0) {
+        setToolLog(calls.map(c => ({ tool: c.tool, label: TOOL_LABEL[c.tool] ?? c.tool })))
+        const hasMutation = calls.some(c => MUTATING_TOOLS.has(c.tool))
+        if (hasMutation) {
+          qc.invalidateQueries({ queryKey: ['machines'] })
+          onScheduleChanged()
+        }
+      }
+    },
+    onError: () => {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'エラーが発生しました。再度お試しください。' }])
+    },
+  })
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const handleSend = (text: string) => {
+    if (!text.trim() || sendMut.isPending) return
+    const newMsgs: ChatMessage[] = [...messages, { role: 'user', content: text }]
+    setMessages(newMsgs)
+    setInput('')
+    setToolLog([])
+    sendMut.mutate(newMsgs)
+  }
+
+  return (
+    <div className="mt-6 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      {/* ヘッダー */}
+      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🤖</span>
+          <h2 className="text-sm font-semibold text-gray-700">AIスケジュールアシスタント</h2>
+          <span className="text-xs text-gray-400">設備制約・メンテナンス・ロックの調整ができます</span>
+        </div>
+        {messages.length > 0 && (
+          <button
+            onClick={() => { setMessages([]); setToolLog([]) }}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            会話をリセット
+          </button>
+        )}
+      </div>
+
+      {/* クイックアクション（会話がない時） */}
+      {messages.length === 0 && (
+        <div className="px-4 pt-4 pb-2">
+          <p className="text-xs text-gray-400 mb-2">よく使う操作：</p>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_PROMPTS.map(p => (
+              <button
+                key={p}
+                onClick={() => handleSend(p)}
+                disabled={sendMut.isPending}
+                className="text-xs px-3 py-1.5 rounded-full border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors disabled:opacity-50"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* メッセージ一覧 */}
+      {messages.length > 0 && (
+        <div className="px-4 py-3 space-y-3 max-h-80 overflow-y-auto">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                  m.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-sm'
+                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                }`}
+              >
+                {m.content}
+              </div>
+            </div>
+          ))}
+
+          {/* ツール実行ログ */}
+          {sendMut.isPending && toolLog.length === 0 && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
+                <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+                考えています...
+              </div>
+            </div>
+          )}
+          {sendMut.isPending && toolLog.length > 0 && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-xs text-gray-500 space-y-0.5">
+                {toolLog.map((t, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    {t.label}
+                  </div>
+                ))}
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+                  <span className="text-gray-400">応答を生成中...</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+      )}
+
+      {/* 入力エリア */}
+      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex gap-2 items-end">
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleSend(input)
+            }
+          }}
+          placeholder="例：旋盤Aを来週月火でメンテナンスにして　/ 納期超過中の工程を確認して"
+          rows={2}
+          disabled={sendMut.isPending}
+          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
+        />
+        <button
+          onClick={() => handleSend(input)}
+          disabled={sendMut.isPending || !input.trim()}
+          className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex-shrink-0 h-[72px] flex items-center"
+        >
+          送信
+        </button>
       </div>
     </div>
   )
@@ -641,17 +826,7 @@ export default function GanttPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['gantt'] }); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
   })
 
-  const tableStartMut = useMutation({
-    mutationFn: (opId: number) => operationsApi.start(opId),
-    onSuccess: invalidate,
-    onError: () => alert('着手の登録に失敗しました'),
-  })
 
-  const tableFinishMut = useMutation({
-    mutationFn: (opId: number) => operationsApi.complete(opId),
-    onSuccess: invalidate,
-    onError: () => alert('完了の登録に失敗しました'),
-  })
 
   // ★ 早期returnより前に全フックを呼ぶ (React rules of hooks)
   const { data: tenantSettings } = useQuery({
@@ -1353,121 +1528,9 @@ export default function GanttPage() {
         </div>
       )}
 
-      {/* スケジュールテーブル（工程単位） */}
-      {(() => {
-        const fmtDate = (s: string) => {
-          const d = new Date(s)
-          return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
-        }
-        const durationH = (s: string, e: string) =>
-          ((new Date(e).getTime() - new Date(s).getTime()) / 3600000).toFixed(1)
+      {/* AIアシスタントパネル */}
+      <GanttAiAssistant onScheduleChanged={invalidate} />
 
-        const sorted = [...tasks].sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
-
-        return (
-          <div className="mt-6 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700">スケジュール一覧（工程別）</h2>
-              {viewDraft && <span className="text-xs text-yellow-600 font-medium">✏️ 下書きモード — 編集ボタンで変更できます</span>}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50 text-gray-500">
-                    <th className="text-left px-3 py-2.5 font-medium w-4"></th>
-                    <th className="text-left px-3 py-2.5 font-medium">受注番号</th>
-                    <th className="text-left px-3 py-2.5 font-medium">品名</th>
-                    <th className="text-left px-3 py-2.5 font-medium">設備</th>
-                    <th className="text-left px-3 py-2.5 font-medium">開始予定</th>
-                    <th className="text-left px-3 py-2.5 font-medium">終了予定</th>
-                    <th className="text-right px-3 py-2.5 font-medium">作業時間</th>
-                    <th className="text-left px-3 py-2.5 font-medium">納期</th>
-                    <th className="text-left px-3 py-2.5 font-medium">進捗</th>
-                    <th className="px-3 py-2.5 text-center">ロック</th>
-                    {!viewDraft && <th className="px-3 py-2.5 text-center">操作</th>}
-                    {viewDraft && <th className="px-3 py-2.5"></th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map(t => {
-                    const [orderNum, productName] = t.text.includes(' / ') ? t.text.split(' / ') : ['', t.text]
-                    return (
-                      <tr
-                        key={t.id}
-                        className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${t.is_delayed ? 'bg-red-50 hover:bg-red-100' : ''}`}
-                      >
-                        <td className="px-3 py-2.5">
-                          <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: getOrderColor(t.order_id) }} />
-                        </td>
-                        <td className="px-3 py-2.5 font-medium text-gray-700 whitespace-nowrap">{orderNum}</td>
-                        <td className="px-3 py-2.5 text-gray-800">{productName}</td>
-                        <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{t.resource}</td>
-                        <td className="px-3 py-2.5 text-gray-600 tabular-nums whitespace-nowrap">{fmtDate(t.start_date)}</td>
-                        <td className="px-3 py-2.5 text-gray-600 tabular-nums whitespace-nowrap">{fmtDate(t.end_date)}</td>
-                        <td className="px-3 py-2.5 text-gray-500 tabular-nums text-right whitespace-nowrap">{durationH(t.start_date, t.end_date)}h</td>
-                        <td className={`px-3 py-2.5 tabular-nums whitespace-nowrap font-medium ${t.is_delayed ? 'text-red-600' : 'text-gray-600'}`}>{t.due_date}</td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex gap-1 flex-wrap">
-                            {t.op_status === 'done'        && <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">✓ 完了</span>}
-                            {t.op_status === 'in_progress' && <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">▶ 着手中</span>}
-                            {t.op_status === 'not_started' && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">未着手</span>}
-                            {t.is_urgent  && <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">特急</span>}
-                            {t.is_delayed && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700">⚠ 遅延</span>}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <button
-                            title={t.is_locked ? 'ロック解除' : 'スケジュールをロック（再スケジュールで変更されなくなります）'}
-                            onClick={() => {
-                              const opId = parseInt(t.id.replace('op-', ''), 10)
-                              lockMut.mutate(opId)
-                            }}
-                            disabled={lockMut.isPending}
-                            className={`text-base transition-opacity hover:opacity-70 ${t.is_locked ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
-                          >
-                            {t.is_locked ? '🔒' : '🔓'}
-                          </button>
-                        </td>
-                        {!viewDraft && (
-                          <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                            {t.op_status === 'not_started' && (
-                              <button
-                                onClick={() => { const id = parseInt(t.id.replace('op-',''),10); tableStartMut.mutate(id) }}
-                                disabled={tableStartMut.isPending}
-                                className="px-2 py-1 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-60"
-                              >▶ 着手</button>
-                            )}
-                            {t.op_status === 'in_progress' && (
-                              <button
-                                onClick={() => { const id = parseInt(t.id.replace('op-',''),10); tableFinishMut.mutate(id) }}
-                                disabled={tableFinishMut.isPending}
-                                className="px-2 py-1 rounded-md bg-green-600 text-white text-xs font-medium hover:bg-green-700 disabled:opacity-60"
-                              >✓ 完了</button>
-                            )}
-                            {t.op_status === 'done' && (
-                              <span className="text-gray-300 text-xs">—</span>
-                            )}
-                          </td>
-                        )}
-                        {viewDraft && (
-                          <td className="px-3 py-2.5">
-                            <button
-                              onClick={() => setEditTask(t)}
-                              className="px-2 py-1 rounded-md border border-yellow-300 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 transition-colors whitespace-nowrap"
-                            >
-                              ✎ 編集
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )
-      })()}
       </>)} {/* ガントタブ終了 */}
 
       {/* ツールチップ */}

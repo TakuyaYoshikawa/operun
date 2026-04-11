@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { machinesApi } from '../api/machines'
 import { scheduleApi } from '../api/schedule'
+import { ordersApi } from '../api/orders'
+import { customersApi } from '../api/customers'
 import type { DeliverySimResult, DeliverySimScenario } from '../api/schedule'
 
 interface SimOp {
@@ -9,16 +11,159 @@ interface SimOp {
   duration_hours: number
 }
 
+// ── 受注登録モーダル ──────────────────────────────────────────────
+interface RegisterModalProps {
+  productName: string
+  dueDate: string
+  priority: number
+  isUrgent: boolean
+  ops: SimOp[]
+  onClose: () => void
+  onRegistered: () => void
+}
+
+function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose, onRegistered }: RegisterModalProps) {
+  const queryClient = useQueryClient()
+  const { data: customers } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => customersApi.list().then(r => r.data.items),
+  })
+
+  const [orderNumber, setOrderNumber] = useState('')
+  const [productCode, setProductCode] = useState('')
+  const [quantity, setQuantity] = useState(1)
+  const [customerId, setCustomerId] = useState<number | ''>('')
+  const [note, setNote] = useState('')
+
+  const createMut = useMutation({
+    mutationFn: async () => {
+      const order = await ordersApi.create({
+        order_number: orderNumber,
+        product_name: productName,
+        product_code: productCode,
+        quantity,
+        due_date: dueDate,
+        priority: priority as 1 | 2 | 3,
+        status: 'pending',
+        note: note || undefined,
+        customer_id: customerId === '' ? null : customerId,
+      })
+      const orderId = order.data.id
+      for (let i = 0; i < ops.length; i++) {
+        await ordersApi.operations.add(orderId, {
+          machine_id: ops[i].machine_id,
+          duration_hours: ops[i].duration_hours,
+          is_urgent: isUrgent,
+        })
+      }
+      return orderId
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      onRegistered()
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ? `登録失敗: ${msg}` : '登録に失敗しました')
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+        <h2 className="text-lg font-bold text-gray-800 mb-4">受注登録</h2>
+
+        <form
+          onSubmit={e => { e.preventDefault(); createMut.mutate() }}
+          className="space-y-4"
+        >
+          {/* 読み取り専用情報 */}
+          <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500">品名</span><span className="font-medium">{productName || '—'}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">希望納期</span><span className="font-medium">{dueDate}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">優先度</span><span className="font-medium">{isUrgent ? '特急' : priority === 2 ? '高' : '通常'}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">工程数</span><span className="font-medium">{ops.length} 工程</span></div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">受注番号 <span className="text-red-500">*</span></label>
+            <input
+              required value={orderNumber} onChange={e => setOrderNumber(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              placeholder="ORD-2026-001"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">品番</label>
+            <input
+              value={productCode} onChange={e => setProductCode(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              placeholder="PART-001"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">数量</label>
+            <input
+              required type="number" min={1} value={quantity} onChange={e => setQuantity(Number(e.target.value))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">顧客</label>
+            <select
+              value={customerId} onChange={e => setCustomerId(e.target.value === '' ? '' : Number(e.target.value))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+            >
+              <option value="">選択しない</option>
+              {customers?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">備考</label>
+            <textarea
+              value={note} onChange={e => setNote(e.target.value)}
+              rows={2}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button" onClick={onClose}
+              className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium text-sm hover:bg-gray-50"
+            >
+              キャンセル
+            </button>
+            <button
+              type="submit" disabled={createMut.isPending}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-blue-700 disabled:opacity-60"
+            >
+              {createMut.isPending ? '登録中...' : '登録する'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── シナリオ結果パネル ────────────────────────────────────────────
 function ScenarioResult({
   label,
   scenario,
   dueDate,
   accent,
+  onRegister,
 }: {
   label: string
   scenario: DeliverySimScenario
   dueDate: string
   accent: 'normal' | 'urgent'
+  onRegister: () => void
 }) {
   const formatTime = (iso: string | null) => {
     if (!iso) return '—'
@@ -75,18 +220,29 @@ function ScenarioResult({
       )}
 
       {scenario.affected_count > 0 && (
-        <div className="text-xs text-orange-700">
+        <div className="text-xs text-orange-700 mb-3">
           <span className="font-medium">影響を受ける受注：{scenario.affected_count} 件</span>
           <span className="text-orange-500 ml-1">（{scenario.affected_orders.slice(0, 3).join(', ')}{scenario.affected_count > 3 ? ' …' : ''}）</span>
         </div>
       )}
       {scenario.affected_count === 0 && scenario.feasible && (
-        <p className="text-xs text-green-700">既存受注への影響なし</p>
+        <p className="text-xs text-green-700 mb-3">既存受注への影響なし</p>
+      )}
+
+      {/* 受注登録ボタン */}
+      {scenario.feasible && (
+        <button
+          onClick={onRegister}
+          className="w-full mt-1 border border-blue-300 text-blue-700 bg-white hover:bg-blue-50 text-sm py-1.5 rounded-lg font-medium transition-colors"
+        >
+          この条件で受注登録
+        </button>
       )}
     </div>
   )
 }
 
+// ── メインページ ──────────────────────────────────────────────────
 export default function DeliverySimPage() {
   const { data: machines } = useQuery({
     queryKey: ['machines'],
@@ -103,6 +259,10 @@ export default function DeliverySimPage() {
   const [ops, setOps] = useState<SimOp[]>([{ machine_id: 0, duration_hours: 1 }])
   const [result, setResult] = useState<DeliverySimResult | null>(null)
 
+  // モーダル状態: null=非表示, 'normal'|'urgent'=どちらのシナリオで登録するか
+  const [registerMode, setRegisterMode] = useState<'normal' | 'urgent' | null>(null)
+  const [registeredOrderId, setRegisteredOrderId] = useState<number | null>(null)
+
   const machineGroups = (() => {
     if (!machines) return []
     const seen = new Map<string | null, typeof machines>()
@@ -116,7 +276,7 @@ export default function DeliverySimPage() {
 
   const sim = useMutation({
     mutationFn: scheduleApi.simulateDelivery,
-    onSuccess: data => setResult(data.data),
+    onSuccess: data => { setResult(data.data); setRegisteredOrderId(null) },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       alert(msg ? `シミュレーション失敗: ${msg}` : '設備を選択してください。')
@@ -134,6 +294,10 @@ export default function DeliverySimPage() {
     setResult(null)
     sim.mutate({ product_name: productName, due_date: dueDate, priority, is_urgent: priority === 1, operations: ops })
   }
+
+  // 登録対象のシナリオと優先度
+  const registerIsUrgent = registerMode === 'urgent'
+  const registerPriority = registerIsUrgent ? 1 : priority
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -227,6 +391,12 @@ export default function DeliverySimPage() {
         </form>
       </div>
 
+      {registeredOrderId && (
+        <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700 font-medium text-center">
+          受注を登録しました
+        </div>
+      )}
+
       {result && (
         <div className="mt-6 space-y-4">
           {/* 通常優先度 */}
@@ -235,6 +405,7 @@ export default function DeliverySimPage() {
             scenario={result}
             dueDate={dueDate}
             accent="normal"
+            onRegister={() => setRegisterMode('normal')}
           />
 
           {/* 最優先シナリオ（通常・高の場合のみ表示） */}
@@ -250,10 +421,27 @@ export default function DeliverySimPage() {
                 scenario={result.urgent}
                 dueDate={dueDate}
                 accent="urgent"
+                onRegister={() => setRegisterMode('urgent')}
               />
             </div>
           )}
         </div>
+      )}
+
+      {/* 受注登録モーダル */}
+      {registerMode && result && (
+        <RegisterModal
+          productName={productName}
+          dueDate={dueDate}
+          priority={registerPriority}
+          isUrgent={registerIsUrgent}
+          ops={ops}
+          onClose={() => setRegisterMode(null)}
+          onRegistered={() => {
+            setRegisterMode(null)
+            setRegisteredOrderId(1) // 登録済みフラグ
+          }}
+        />
       )}
     </div>
   )
