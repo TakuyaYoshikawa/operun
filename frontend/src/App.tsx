@@ -102,8 +102,10 @@ function Layout({ page, setPage, onLogout }: {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left cursor-not-allowed select-none"
               >
                 <span className="opacity-40">{n.icon}</span>
-                <span className="text-gray-300">{n.label}</span>
-                <span className="ml-auto text-[10px] text-gray-300 font-normal whitespace-nowrap">（プロ版機能）</span>
+                <div className="flex flex-col">
+                  <span className="text-gray-300">{n.label}</span>
+                  <span className="text-[10px] text-gray-300 font-normal">（プロ版機能）</span>
+                </div>
               </div>
             ))}
           </div>
