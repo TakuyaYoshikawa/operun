@@ -477,9 +477,9 @@ export default function OrdersPage() {
                     <td className="px-4 py-3 text-center text-gray-600">{STATUS_LABEL[o.status]}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        o.operations.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'
-                      }`}>
-                        {o.operations.length}工程
+                        o.operations.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-600'
+                      }`} title={o.operations.length === 0 ? '工程が未登録のため、スケジュールに含まれません' : undefined}>
+                        {o.operations.length === 0 ? '⚠ 工程なし' : `${o.operations.length}工程`}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>

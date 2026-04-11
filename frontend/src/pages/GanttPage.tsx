@@ -578,7 +578,16 @@ export default function GanttPage() {
 
   const runMut = useMutation({
     mutationFn: scheduleApi.runSchedule,
-    onSuccess: () => { invalidate(); setViewDraft(true) },
+    onSuccess: (res) => {
+      invalidate()
+      const scheduled = res.data?.scheduled ?? 0
+      if (scheduled === 0) {
+        alert('スケジュールする工程がありません。\n受注管理で各受注に「工程」（設備・所要時間）を追加してください。')
+        return
+      }
+      setViewDraft(true)
+    },
+    onError: () => alert('スケジュール実行に失敗しました。'),
   })
 
   const commitMut = useMutation({
