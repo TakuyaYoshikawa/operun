@@ -24,7 +24,8 @@ const emptyForm: OrderCreate = {
 }
 
 const emptyOpForm: OperationCreate = {
-  machine_id: 0, process_id: null, duration_hours: 1, is_urgent: false, wait_hours_after: 0, not_before_date: null,
+  machine_id: 0, process_id: null, duration_hours: 1, is_urgent: false,
+  machine_locked: false, wait_hours_after: 0, not_before_date: null,
 }
 
 // ── 工程エディタ（受注詳細の下部に表示）─────────────────────────────────────
@@ -69,8 +70,26 @@ function OperationsEditor({ order }: { order: Order }) {
 
   const machineName = (id: number) =>
     machines?.find(m => m.id === id)?.name ?? `設備#${id}`
+  const machineType = (id: number) =>
+    machines?.find(m => m.id === id)?.machine_type ?? null
   const processName = (id: number | null) =>
     id ? (processes?.find(p => p.id === id)?.name ?? `工程#${id}`) : '—'
+
+  // 設備をグループ（machine_type）別に整理
+  const machineGroups = (() => {
+    if (!machines) return []
+    const groups: { type: string | null; machines: typeof machines }[] = []
+    const seen = new Map<string | null, typeof machines[0][]>()
+    for (const m of machines) {
+      const key = m.machine_type
+      if (!seen.has(key)) seen.set(key, [])
+      seen.get(key)!.push(m)
+    }
+    for (const [type, ms] of seen) {
+      groups.push({ type, machines: ms })
+    }
+    return groups
+  })()
 
   const handleOpSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -88,6 +107,7 @@ function OperationsEditor({ order }: { order: Order }) {
       process_id: op.process_id,
       duration_hours: op.duration_hours,
       is_urgent: op.is_urgent,
+      machine_locked: op.machine_locked,
       wait_hours_after: op.wait_hours_after ?? 0,
       not_before_date: op.not_before_date ?? null,
     })
@@ -120,7 +140,17 @@ function OperationsEditor({ order }: { order: Order }) {
               {i < order.operations.length - 1 && (
                 <span className="text-gray-300 text-xs">→</span>
               )}
-              <span className="font-medium text-gray-700 flex-1">{machineName(op.machine_id)}</span>
+              <span className="font-medium text-gray-700 flex-1">
+                {op.machine_locked
+                  ? machineName(op.machine_id)
+                  : (machineType(op.machine_id) ?? machineName(op.machine_id))}
+              </span>
+              {!op.machine_locked && machineType(op.machine_id) && (
+                <span className="text-xs px-1.5 py-0.5 bg-indigo-50 text-indigo-500 rounded" title="グループ内の空き設備を自動選択">自動</span>
+              )}
+              {op.machine_locked && (
+                <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded" title="指定した設備に固定">固定</span>
+              )}
               <span className="text-gray-400">{processName(op.process_id)}</span>
               <span className="text-gray-500">{op.duration_hours}h</span>
               {op.is_urgent && (
@@ -170,7 +200,7 @@ function OperationsEditor({ order }: { order: Order }) {
 
       <form onSubmit={handleOpSubmit} className="flex gap-2 items-end flex-wrap">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">設備 *</label>
+          <label className="block text-xs text-gray-500 mb-1">設備グループ *</label>
           <select
             required
             value={opForm.machine_id}
@@ -178,10 +208,26 @@ function OperationsEditor({ order }: { order: Order }) {
             className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
           >
             <option value={0} disabled>選択</option>
-            {machines?.map(m => (
-              <option key={m.id} value={m.id}>{m.name}</option>
+            {machineGroups.map(({ type, machines: ms }) => (
+              type
+                ? <optgroup key={type} label={type}>
+                    {ms.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </optgroup>
+                : ms.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">設備割り当て</label>
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg px-2 py-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={opForm.machine_locked ?? false}
+              onChange={e => setOpForm(f => ({ ...f, machine_locked: e.target.checked }))}
+              className="accent-indigo-600"
+            />
+            {opForm.machine_locked ? '設備固定' : 'グループ自動選択'}
+          </label>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">工程</label>
