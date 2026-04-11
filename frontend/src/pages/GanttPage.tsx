@@ -1243,11 +1243,18 @@ export default function GanttPage() {
               </>
             )}
 
-            {/* ゴーストバー: transform で GPU合成、left/top は固定0 */}
+            {/* ゴーストバー: style はReactに渡さずDOMで直接管理（再レンダーで上書きされない） */}
             <div
-              ref={ghostElRef}
-              className="absolute h-7 rounded pointer-events-none z-30"
-              style={{ display: 'none', top: 0, left: 0, transform: 'translate3d(0,0,0)' }}
+              ref={el => {
+                ghostElRef.current = el
+                if (el) {
+                  el.style.display = 'none'
+                  el.style.position = 'absolute'
+                  el.style.top = '0'
+                  el.style.left = '0'
+                }
+              }}
+              className="h-7 rounded pointer-events-none z-30"
             />
           </div>
         </div>
