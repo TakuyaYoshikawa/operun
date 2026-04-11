@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { scheduleApi } from '../api/schedule'
 import { machinesApi } from '../api/machines'
 import { settingsApi } from '../api/settings'
+import { operationsApi } from '../api/operations'
 import type { GanttTask, MachineLoad } from '../api/schedule'
 
 const DRAFT_BANNER_CLASS = 'bg-yellow-50 border-yellow-300 text-yellow-800'
@@ -71,12 +72,12 @@ function Tooltip({ state }: { state: TooltipState }) {
           <span>{PRIORITY_LABEL[task.priority] ?? task.priority}</span>
         </div>
       </div>
-      {(task.is_delayed || task.is_urgent) && (
-        <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2 flex-wrap">
-          {task.is_urgent  && <span className="px-1.5 py-0.5 rounded bg-orange-500 text-white text-xs">特急</span>}
-          {task.is_delayed && <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-xs">⚠ 納期超過</span>}
-        </div>
-      )}
+      <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2 flex-wrap">
+        {task.op_status === 'done'        && <span className="px-1.5 py-0.5 rounded bg-green-700 text-white text-xs">✓ 完了</span>}
+        {task.op_status === 'in_progress' && <span className="px-1.5 py-0.5 rounded bg-blue-600 text-white text-xs">作業中</span>}
+        {task.is_urgent                   && <span className="px-1.5 py-0.5 rounded bg-orange-500 text-white text-xs">特急</span>}
+        {task.is_delayed                  && <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-xs">⚠ 納期超過</span>}
+      </div>
     </div>
   )
 }
@@ -103,6 +104,7 @@ function GanttBar({
 
   const color   = getOrderColor(task.order_id)
   const productName = task.text.includes(' / ') ? task.text.split(' / ')[1] : task.text
+  const isDone  = task.op_status === 'done'
 
   return (
     <div
@@ -113,12 +115,14 @@ function GanttBar({
         left,
         width,
         backgroundColor: color,
+        opacity: isDone ? 0.5 : 1,
         outline: task.is_delayed ? '2px solid #ef4444' : (draftMode ? '1.5px dashed rgba(255,255,255,0.6)' : undefined),
         outlineOffset: task.is_delayed ? '-1px' : undefined,
       }}
       className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer hover:brightness-90 transition-all select-none"
     >
-      {task.is_urgent && <span className="mr-1 text-yellow-200 font-bold">!</span>}
+      {isDone && <span className="mr-1">✓</span>}
+      {task.is_urgent && !isDone && <span className="mr-1 text-yellow-200 font-bold">!</span>}
       {draftMode && <span className="mr-1 opacity-70">✎</span>}
       <span className="truncate">{productName}</span>
     </div>
@@ -203,6 +207,168 @@ function LoadChart({ data }: { data: MachineLoad[]; days?: number }) {
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-400 inline-block"/> 中(≥50%)</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-200 inline-block"/> 低(&lt;50%)</span>
       </div>
+    </div>
+  )
+}
+
+// ── 工程詳細 / 完了モーダル ──────────────────────────────────────────────────
+
+const OP_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  not_started: { label: '未着手',     cls: 'bg-gray-100 text-gray-600' },
+  in_progress:  { label: '作業中',    cls: 'bg-blue-100 text-blue-700' },
+  done:         { label: '完了',      cls: 'bg-green-100 text-green-700' },
+  on_hold:      { label: '保留中',    cls: 'bg-yellow-100 text-yellow-700' },
+}
+
+function OperationDetailModal({
+  task,
+  onClose,
+  onCompleted,
+}: {
+  task: GanttTask
+  onClose: () => void
+  onCompleted: () => void
+}) {
+  const [actualHours, setActualHours] = useState('')
+  const [note, setNote]               = useState('')
+  const [confirmed, setConfirmed]     = useState(false)
+
+  const opId = parseInt(task.id.replace('op-', ''), 10)
+  const productName = task.text.includes(' / ') ? task.text.split(' / ')[1] : task.text
+  const orderNum    = task.text.includes(' / ') ? task.text.split(' / ')[0] : ''
+  const status      = task.op_status ?? 'not_started'
+  const statusInfo  = OP_STATUS_LABEL[status] ?? OP_STATUS_LABEL.not_started
+  const isDone      = status === 'done'
+
+  const completeMut = useMutation({
+    mutationFn: () => operationsApi.complete(opId, {
+      actual_hours: actualHours ? parseFloat(actualHours) : undefined,
+      actual_note: note || undefined,
+    }),
+    onSuccess: () => { onCompleted() },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-5">
+
+        {/* ヘッダー */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-gray-800">{productName}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{orderNum}　工程 #{task.sequence}</p>
+          </div>
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusInfo.cls}`}>
+            {statusInfo.label}
+          </span>
+        </div>
+
+        {/* 詳細情報 */}
+        <div className="bg-gray-50 rounded-xl p-3 space-y-1.5 mb-4 text-sm">
+          <Row label="設備" value={task.resource} />
+          <Row label="予定開始" value={fmtDt(task.start_date)} />
+          <Row label="予定終了" value={fmtDt(task.end_date)} />
+          <Row label="納期" value={task.due_date} accent={task.is_delayed ? 'red' : undefined} />
+          {task.is_urgent && (
+            <div className="pt-1">
+              <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium">特急</span>
+            </div>
+          )}
+          {task.is_delayed && (
+            <div className="pt-0.5">
+              <span className="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">⚠ 納期超過</span>
+            </div>
+          )}
+        </div>
+
+        {/* 完了済みの場合 */}
+        {isDone ? (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 text-center mb-4">
+            この工程は完了済みです
+          </div>
+        ) : (
+          <>
+            {/* 完了入力フォーム */}
+            {confirmed ? (
+              <div className="space-y-3 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    実績時間（任意）
+                    <span className="text-gray-400 font-normal ml-1">省略時は予定時間を使用</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={actualHours}
+                      onChange={e => setActualHours(e.target.value)}
+                      placeholder="例: 8.5"
+                      className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                    />
+                    <span className="text-sm text-gray-500">時間</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">メモ（任意）</label>
+                  <textarea
+                    value={note}
+                    onChange={e => setNote(e.target.value)}
+                    rows={2}
+                    placeholder="完了時のメモを入力..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 resize-none"
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {/* ボタン */}
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="flex-1 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+              >
+                閉じる
+              </button>
+              {!confirmed ? (
+                <button
+                  onClick={() => setConfirmed(true)}
+                  className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700"
+                >
+                  工程完了にする
+                </button>
+              ) : (
+                <button
+                  onClick={() => completeMut.mutate()}
+                  disabled={completeMut.isPending}
+                  className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-60"
+                >
+                  {completeMut.isPending ? '処理中...' : '✓ 完了を確定'}
+                </button>
+              )}
+            </div>
+            {completeMut.isError && (
+              <p className="text-xs text-red-500 mt-2 text-center">エラーが発生しました。再試行してください。</p>
+            )}
+          </>
+        )}
+
+        {isDone && (
+          <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">
+            閉じる
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Row({ label, value, accent }: { label: string; value: string; accent?: 'red' }) {
+  return (
+    <div className="flex justify-between items-center">
+      <span className="text-gray-400">{label}</span>
+      <span className={`font-medium ${accent === 'red' ? 'text-red-500' : 'text-gray-700'}`}>{value}</span>
     </div>
   )
 }
@@ -305,6 +471,7 @@ export default function GanttPage() {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [viewDraft, setViewDraft] = useState(false)
   const [editTask, setEditTask] = useState<GanttTask | null>(null)
+  const [detailTask, setDetailTask] = useState<GanttTask | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [tabMode, setTabMode] = useState<TabMode>('gantt')
 
@@ -366,7 +533,11 @@ export default function GanttPage() {
   })
 
   const handleBarClick = (task: GanttTask) => {
-    if (viewDraft) setEditTask(task)
+    if (viewDraft) {
+      setEditTask(task)
+    } else {
+      setDetailTask(task)
+    }
   }
 
   const handleSaveDraftOp = (opId: number, start: string, end: string, machineId: number) => {
@@ -832,6 +1003,18 @@ export default function GanttPage() {
           task={editTask}
           onClose={() => setEditTask(null)}
           onSave={handleSaveDraftOp}
+        />
+      )}
+
+      {/* 工程詳細 / 完了モーダル */}
+      {detailTask && (
+        <OperationDetailModal
+          task={detailTask}
+          onClose={() => setDetailTask(null)}
+          onCompleted={() => {
+            setDetailTask(null)
+            invalidate()
+          }}
         />
       )}
     </div>

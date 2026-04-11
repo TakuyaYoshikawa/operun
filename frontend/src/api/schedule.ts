@@ -13,6 +13,8 @@ export interface GanttTask {
   is_urgent: boolean
   is_delayed: boolean
   is_locked: boolean
+  op_status: 'not_started' | 'in_progress' | 'done' | 'on_hold'
+  sequence: number
   color: string
 }
 
