@@ -5,7 +5,7 @@ import type { ChatMessage, ParsedOrder } from '../api/ai'
 import { ordersApi } from '../api/orders'
 import { customersApi } from '../api/customers'
 
-type Mode = 'order' | 'chat' | 'agent'
+type Mode = 'order' | 'chat' | 'agent' | 'constraint'
 
 // チャットメッセージの型（テキスト or 受注フォーム）
 type Message =
@@ -424,6 +424,13 @@ const TOOL_LABEL: Record<string, string> = {
   create_customer: '顧客を登録',
   get_schedule_summary: 'スケジュールを確認',
   run_schedule: 'スケジュールを実行',
+  // 制約設定ツール
+  search_machines: '設備を検索',
+  update_machine_status: '設備の稼働状態を変更',
+  add_maintenance_window: 'メンテナンス枠を登録',
+  update_operation_constraint: '工程制約を変更',
+  add_calendar_exception: 'カレンダー例外日を追加',
+  explain_constraints: '制約設定を確認',
 }
 
 function ToolCallCard({ tool, input, result }: { tool: string; input: Record<string, unknown>; result: unknown }) {
@@ -552,6 +559,126 @@ function AgentChat() {
   )
 }
 
+// ── 制約設定アシスタント ──────────────────────────────────────────────────────
+
+function ConstraintChat() {
+  const [messages, setMessages] = useState<AgentMessage[]>([
+    {
+      type: 'text', role: 'assistant',
+      content: '制約設定アシスタントです。設備の故障・メンテナンス・工程の制約・カレンダー例外を自然言語で設定できます。\n\n例：\n・「旋盤1号機が来週月〜金まで修理で使えない」\n・「ORD-031の焼入れ工程は8時間冷却後にメッキ開始して」\n・「お盆は8/13〜8/15の3日間、半日稼働にして」\n・「現在の制約設定を教えて」',
+    },
+  ])
+  const [input, setInput] = useState('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const historyRef = useRef<ChatMessage[]>([])
+
+  const agentMut = useMutation({
+    mutationFn: (msgs: ChatMessage[]) => aiApi.agent(msgs),
+    onSuccess: (res) => {
+      const { reply, tool_calls } = res.data
+      historyRef.current = [...historyRef.current, { role: 'assistant', content: reply }]
+      setMessages(prev => [
+        ...(tool_calls.length > 0 ? [...prev, { type: 'tool-calls' as const, calls: tool_calls }] : prev),
+        { type: 'text', role: 'assistant', content: reply },
+      ])
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : '不明なエラー'
+      setMessages(prev => [...prev, { type: 'text', role: 'assistant', content: `エラーが発生しました。\n${msg}` }])
+    },
+  })
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, agentMut.isPending])
+
+  const send = () => {
+    if (!input.trim() || agentMut.isPending) return
+    const text = input.trim()
+    setMessages(prev => [...prev, { type: 'text', role: 'user', content: text }])
+    historyRef.current = [...historyRef.current, { role: 'user', content: text }]
+    setInput('')
+    agentMut.mutate(historyRef.current)
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* クイックアクション */}
+      <div className="px-4 pt-3 pb-0 flex-shrink-0 flex gap-2 flex-wrap">
+        {[
+          { label: '制約一覧を確認', text: '現在の制約設定をすべて教えて' },
+          { label: '設備故障を登録', text: '設備が故障して使えない期間を登録したい' },
+          { label: 'お盆休みを設定', text: 'お盆期間（8/13〜8/15）を半日稼働に設定して' },
+          { label: '工程冷却待ち設定', text: '工程の完了後に冷却待機時間を設定したい' },
+        ].map(({ label, text }) => (
+          <button
+            key={label}
+            onClick={() => { setInput(text) }}
+            className="text-xs px-3 py-1.5 rounded-full border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition-colors"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+        {messages.map((msg, i) => {
+          if (msg.type === 'tool-calls') {
+            return (
+              <div key={i} className="pl-9 pr-4 mb-2">
+                {msg.calls.map((c, j) => (
+                  <ToolCallCard key={j} tool={c.tool} input={c.input} result={c.result} />
+                ))}
+              </div>
+            )
+          }
+          return (
+            <div key={i} className={`flex mb-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center text-sm mr-2 flex-shrink-0 mt-0.5">⚙️</div>
+              )}
+              <div className={`max-w-sm px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
+                msg.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-br-sm'
+                  : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          )
+        })}
+        {agentMut.isPending && (
+          <div className="flex items-start mb-3">
+            <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center text-sm mr-2 flex-shrink-0">⚙️</div>
+            <div className="bg-white border border-gray-200 px-4 py-2.5 rounded-2xl rounded-bl-sm shadow-sm">
+              <span className="text-gray-400 text-sm flex items-center gap-1.5">
+                <svg className="animate-spin h-3 w-3 text-orange-400" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+                設定中...
+              </span>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <div className="px-4 py-3 border-t border-gray-200 bg-white flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+          placeholder="例：旋盤1号機が来週月〜金まで使えない"
+          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+        />
+        <button
+          onClick={send}
+          disabled={!input.trim() || agentMut.isPending}
+          className="bg-orange-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-orange-600 disabled:opacity-50"
+        >送信</button>
+      </div>
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────────────────────────
 
 export default function AIChatPage() {
@@ -580,6 +707,12 @@ export default function AIChatPage() {
           >
             エージェント
           </button>
+          <button
+            onClick={() => setMode('constraint')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${mode === 'constraint' ? 'bg-white shadow text-orange-700' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            制約設定
+          </button>
         </div>
       </div>
 
@@ -587,6 +720,7 @@ export default function AIChatPage() {
         {mode === 'order' && <OrderInputChat />}
         {mode === 'chat' && <StatusChat />}
         {mode === 'agent' && <AgentChat />}
+        {mode === 'constraint' && <ConstraintChat />}
       </div>
     </div>
   )
