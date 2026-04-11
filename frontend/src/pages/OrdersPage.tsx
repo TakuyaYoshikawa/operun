@@ -298,13 +298,175 @@ function OperationsEditor({ order }: { order: Order }) {
   )
 }
 
+// ── 受注詳細パネル（行クリックで展開）──────────────────────────────────────
+
+function OrderDetailPanel({ order, customers, onDeleted }: {
+  order: Order
+  customers: { id: number; name: string }[]
+  onDeleted: () => void
+}) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState<Omit<OrderCreate, 'order_number'>>({
+    product_name: order.product_name,
+    product_code: order.product_code,
+    quantity: order.quantity,
+    due_date: order.due_date,
+    priority: order.priority,
+    status: order.status,
+    note: order.note ?? '',
+    customer_id: order.customer_id ?? null,
+  })
+  const [showCustomerModal, setShowCustomerModal] = useState(false)
+  const [dirty, setDirty] = useState(false)
+
+  const update = <K extends keyof typeof form>(k: K, v: typeof form[K]) => {
+    setForm(f => ({ ...f, [k]: v }))
+    setDirty(true)
+  }
+
+  const updateMut = useMutation({
+    mutationFn: (data: Partial<OrderCreate>) => ordersApi.update(order.id, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); setDirty(false) },
+  })
+  const deleteMut = useMutation({
+    mutationFn: () => ordersApi.delete(order.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); onDeleted() },
+  })
+
+  return (
+    <div className="px-6 py-5 bg-gray-50 border-t border-gray-200">
+      {/* 受注情報 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">受注番号</label>
+          <div className="text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2">
+            {order.order_number}
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">品名 *</label>
+          <input
+            required value={form.product_name}
+            onChange={e => update('product_name', e.target.value)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">品番</label>
+          <input
+            value={form.product_code}
+            onChange={e => update('product_code', e.target.value)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">数量</label>
+          <input
+            type="number" min={1} value={form.quantity}
+            onChange={e => update('quantity', Number(e.target.value))}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">納期 *</label>
+          <input
+            type="date" value={form.due_date}
+            onChange={e => update('due_date', e.target.value)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">優先度</label>
+          <select
+            value={form.priority}
+            onChange={e => update('priority', Number(e.target.value) as 1 | 2 | 3)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          >
+            <option value={1}>特急</option>
+            <option value={2}>高</option>
+            <option value={3}>通常</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">ステータス</label>
+          <select
+            value={form.status}
+            onChange={e => update('status', e.target.value as OrderStatus)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          >
+            <option value="pending">未着手</option>
+            <option value="in_progress">進行中</option>
+            <option value="done">完了</option>
+          </select>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-medium text-gray-500">取引先</label>
+            <button
+              type="button"
+              onClick={() => setShowCustomerModal(true)}
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+            >
+              ＋ 新規登録
+            </button>
+          </div>
+          <select
+            value={form.customer_id ?? ''}
+            onChange={e => update('customer_id', e.target.value ? Number(e.target.value) : null)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+          >
+            <option value="">未選択</option>
+            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2 md:col-span-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">備考</label>
+          <input
+            value={form.note ?? ''}
+            onChange={e => update('note', e.target.value)}
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white"
+            placeholder="（任意）"
+          />
+        </div>
+      </div>
+
+      {/* 保存・削除ボタン */}
+      <div className="flex gap-2 mb-5">
+        <button
+          onClick={() => updateMut.mutate(form)}
+          disabled={!dirty || updateMut.isPending}
+          className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-opacity"
+        >
+          {updateMut.isPending ? '保存中...' : '変更を保存'}
+        </button>
+        <button
+          onClick={() => { if (confirm('この受注を削除しますか？')) deleteMut.mutate() }}
+          disabled={deleteMut.isPending}
+          className="border border-red-300 text-red-500 px-4 py-1.5 rounded-lg text-sm hover:bg-red-50 disabled:opacity-40 ml-auto"
+        >
+          受注を削除
+        </button>
+      </div>
+
+      {/* 工程一覧 */}
+      <OperationsEditor order={order} />
+
+      {showCustomerModal && (
+        <CustomerCreateModal
+          onClose={() => setShowCustomerModal(false)}
+          onCreated={(id) => { update('customer_id', id); setShowCustomerModal(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
 // ── メイン ────────────────────────────────────────────────────────────────────
 
 export default function OrdersPage() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<OrderCreate>(emptyForm)
-  const [editId, setEditId] = useState<number | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [showCustomerModal, setShowCustomerModal] = useState(false)
 
@@ -321,69 +483,43 @@ export default function OrdersPage() {
     mutationFn: ordersApi.create,
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
-      reset()
+      setForm(emptyForm)
+      setShowForm(false)
       setExpandedId(res.data.id)
     },
   })
-  const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<OrderCreate> }) =>
-      ordersApi.update(id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); reset() },
-  })
-  const deleteMut = useMutation({
-    mutationFn: ordersApi.delete,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders'] }),
-  })
-
-  const reset = () => { setForm(emptyForm); setEditId(null); setShowForm(false) }
-
-  const handleEdit = (o: Order) => {
-    setForm({
-      order_number: o.order_number, product_name: o.product_name,
-      product_code: o.product_code, quantity: o.quantity,
-      due_date: o.due_date, priority: o.priority,
-      status: o.status, note: o.note ?? '', customer_id: o.customer_id ?? null,
-    })
-    setEditId(o.id)
-    setShowForm(true)
-    setExpandedId(null)
-  }
-
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (editId) {
-      updateMut.mutate({ id: editId, data: form })
-    } else {
-      createMut.mutate(form)
-    }
-  }
 
   const toggleExpand = (id: number) =>
     setExpandedId(prev => (prev === id ? null : id))
+
+  const customerItems = customers?.items ?? []
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-800">受注一覧</h1>
         <button
-          onClick={() => { reset(); setShowForm(true) }}
+          onClick={() => { setForm(emptyForm); setShowForm(v => !v) }}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium"
         >
-          ＋ 受注登録
+          {showForm ? 'キャンセル' : '＋ 受注登録'}
         </button>
       </div>
 
+      {/* 新規受注登録フォーム */}
       {showForm && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6 shadow-sm">
-          <h2 className="text-lg font-semibold mb-4">{editId ? '受注編集' : '受注登録'}</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+          <h2 className="text-base font-semibold text-gray-800 mb-4">新規受注登録</h2>
+          <form
+            onSubmit={e => { e.preventDefault(); createMut.mutate(form) }}
+            className="grid grid-cols-2 gap-4"
+          >
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">受注番号 *</label>
               <input
-                required disabled={!!editId}
-                value={form.order_number}
+                required value={form.order_number}
                 onChange={e => setForm(f => ({ ...f, order_number: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 placeholder="ORD-001"
               />
             </div>
@@ -397,9 +533,9 @@ export default function OrdersPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">品番 *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">品番</label>
               <input
-                required value={form.product_code}
+                value={form.product_code}
                 onChange={e => setForm(f => ({ ...f, product_code: e.target.value }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 placeholder="ABC-001"
@@ -408,8 +544,7 @@ export default function OrdersPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">数量 *</label>
               <input
-                required type="number" min={1}
-                value={form.quantity}
+                required type="number" min={1} value={form.quantity}
                 onChange={e => setForm(f => ({ ...f, quantity: Number(e.target.value) }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
@@ -435,25 +570,10 @@ export default function OrdersPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">ステータス</label>
-              <select
-                value={form.status}
-                onChange={e => setForm(f => ({ ...f, status: e.target.value as OrderStatus }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="pending">未着手</option>
-                <option value="in_progress">進行中</option>
-                <option value="done">完了</option>
-              </select>
-            </div>
-            <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-sm font-medium text-gray-700">取引先</label>
-                <button
-                  type="button"
-                  onClick={() => setShowCustomerModal(true)}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                >
+                <button type="button" onClick={() => setShowCustomerModal(true)}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium">
                   ＋ 新規登録
                 </button>
               </div>
@@ -463,9 +583,7 @@ export default function OrdersPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               >
                 <option value="">未選択</option>
-                {customers?.items?.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+                {customerItems.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
@@ -476,12 +594,13 @@ export default function OrdersPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               />
             </div>
-            <div className="col-span-2 flex gap-3 justify-end mt-2">
-              <button type="button" onClick={reset} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">
-                キャンセル
-              </button>
-              <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-                {editId ? '更新' : '登録して工程を追加 →'}
+            <div className="col-span-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={createMut.isPending}
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+              >
+                {createMut.isPending ? '登録中...' : '登録して工程を追加 →'}
               </button>
             </div>
           </form>
@@ -491,10 +610,7 @@ export default function OrdersPage() {
       {showCustomerModal && (
         <CustomerCreateModal
           onClose={() => setShowCustomerModal(false)}
-          onCreated={(id) => {
-            setForm(f => ({ ...f, customer_id: id }))
-            setShowCustomerModal(false)
-          }}
+          onCreated={(id) => { setForm(f => ({ ...f, customer_id: id })); setShowCustomerModal(false) }}
         />
       )}
 
@@ -503,74 +619,77 @@ export default function OrdersPage() {
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600 text-xs uppercase">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
               <tr>
+                <th className="px-4 py-3 text-left w-4"></th>
                 <th className="px-4 py-3 text-left">受注番号</th>
                 <th className="px-4 py-3 text-left">品名</th>
-                <th className="px-4 py-3 text-left">品番</th>
-                <th className="px-4 py-3 text-right">数量</th>
+                <th className="px-4 py-3 text-left">取引先</th>
                 <th className="px-4 py-3 text-left">納期</th>
                 <th className="px-4 py-3 text-center">優先度</th>
                 <th className="px-4 py-3 text-center">ステータス</th>
                 <th className="px-4 py-3 text-center">工程</th>
-                <th className="px-4 py-3 text-center">操作</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {data?.items.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                     受注データがありません
                   </td>
                 </tr>
               )}
-              {data?.items.map(o => (
-                <>
-                  <tr
-                    key={o.id}
-                    className={`hover:bg-gray-50 cursor-pointer ${expandedId === o.id ? 'bg-blue-50' : ''}`}
-                    onClick={() => toggleExpand(o.id)}
-                  >
-                    <td className="px-4 py-3 font-medium text-gray-800">{o.order_number}</td>
-                    <td className="px-4 py-3 text-gray-700">{o.product_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{o.product_code}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{o.quantity}</td>
-                    <td className="px-4 py-3 text-gray-700">{o.due_date}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PRIORITY_COLOR[o.priority]}`}>
-                        {PRIORITY_LABEL[o.priority]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-gray-600">{STATUS_LABEL[o.status]}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        o.operations.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-600'
-                      }`} title={o.operations.length === 0 ? '工程が未登録のため、スケジュールに含まれません' : undefined}>
-                        {o.operations.length === 0 ? '⚠ 工程なし' : `${o.operations.length}工程`}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => handleEdit(o)} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
-                      <button
-                        onClick={() => { if (confirm('削除しますか？')) deleteMut.mutate(o.id) }}
-                        className="text-red-400 hover:text-red-600 text-xs"
-                      >削除</button>
-                    </td>
-                  </tr>
-                  {expandedId === o.id && (
-                    <tr key={`${o.id}-ops`}>
-                      <td colSpan={9} className="px-6 py-4 bg-blue-50 border-t border-blue-100">
-                        <OperationsEditor order={o} />
+              {data?.items.map(o => {
+                const isExpanded = expandedId === o.id
+                const customerName = customerItems.find(c => c.id === o.customer_id)?.name
+                return (
+                  <tbody key={o.id}>
+                    <tr
+                      className={`border-t border-gray-100 cursor-pointer transition-colors ${
+                        isExpanded ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => toggleExpand(o.id)}
+                    >
+                      <td className="px-4 py-3 text-gray-400 text-xs">
+                        {isExpanded ? '▾' : '▸'}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-800">{o.order_number}</td>
+                      <td className="px-4 py-3 text-gray-700">{o.product_name}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">{customerName ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-700">{o.due_date}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PRIORITY_COLOR[o.priority]}`}>
+                          {PRIORITY_LABEL[o.priority]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center text-gray-600 text-xs">{STATUS_LABEL[o.status]}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          o.operations.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-600'
+                        }`}>
+                          {o.operations.length === 0 ? '⚠ 工程なし' : `${o.operations.length}工程`}
+                        </span>
                       </td>
                     </tr>
-                  )}
-                </>
-              ))}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={8} className="p-0">
+                          <OrderDetailPanel
+                            order={o}
+                            customers={customerItems}
+                            onDeleted={() => setExpandedId(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                )
+              })}
             </tbody>
           </table>
           {data && (
             <div className="px-4 py-3 border-t border-gray-100 text-xs text-gray-400">
-              合計 {data.total} 件　※行をクリックすると工程を管理できます
+              合計 {data.total} 件　クリックで詳細・工程を編集できます
             </div>
           )}
         </div>
