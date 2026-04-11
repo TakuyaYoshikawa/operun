@@ -8,6 +8,8 @@ import MastersPage from './pages/MastersPage'
 import GanttPage from './pages/GanttPage'
 import DeliverySimPage from './pages/DeliverySimPage'
 import WorkPage from './pages/WorkPage'
+import AIChatPage from './pages/AIChatPage'
+import ConstraintsPage from './pages/ConstraintsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,31 +18,35 @@ const queryClient = new QueryClient({
   },
 })
 
-type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'work'
+type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'work' | 'ai' | 'constraints'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'gantt',    label: 'ガントチャート',     icon: '📊' },
   { id: 'work',     label: '工程実績',           icon: '🔧' },
   { id: 'orders',   label: '受注管理',           icon: '📋' },
   { id: 'delivery', label: '納期シミュレーター', icon: '🔍' },
+  { id: 'ai',       label: 'AIアシスタント',     icon: '🤖' },
 ]
 
 // 設定メニュー（サイドバー下部・ドロワー内に分離）
 const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
-  { id: 'masters', label: 'マスタ管理', icon: '⚙️' },
+  { id: 'constraints', label: '制約設定の確認', icon: '🔒' },
+  { id: 'masters',     label: 'マスタ管理',     icon: '⚙️' },
 ]
 
 // モバイル下部ナビに表示する項目
-const BOTTOM_NAV: Page[] = ['gantt', 'work', 'orders', 'delivery']
+const BOTTOM_NAV: Page[] = ['gantt', 'orders', 'delivery', 'ai']
 
 function PageContent({ page }: { page: Page }) {
   return (
     <>
-      {page === 'gantt'    && <GanttPage />}
-      {page === 'orders'   && <OrdersPage />}
-      {page === 'masters'  && <MastersPage />}
-      {page === 'delivery' && <DeliverySimPage />}
-      {page === 'work'     && <WorkPage />}
+      {page === 'gantt'       && <GanttPage />}
+      {page === 'orders'      && <OrdersPage />}
+      {page === 'masters'     && <MastersPage />}
+      {page === 'delivery'    && <DeliverySimPage />}
+      {page === 'work'        && <WorkPage />}
+      {page === 'ai'          && <AIChatPage />}
+      {page === 'constraints' && <ConstraintsPage />}
     </>
   )
 }

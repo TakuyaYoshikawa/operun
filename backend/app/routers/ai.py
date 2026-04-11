@@ -48,6 +48,110 @@ class ExplainSimulationRequest(BaseModel):
 
 # ── エンドポイント ──────────────────────────────────────────────────────────────
 
+@router.get("/constraints")
+def get_constraints_summary(
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """
+    現在有効な制約設定のサマリーを返す。
+    制約設定確認画面で使用する。
+    """
+    from datetime import datetime as dt
+    now = dt.now()
+    today = date.today()
+    future = today + timedelta(days=90)
+
+    # 稼働中設備・グループ
+    active_machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == True,
+    ).order_by(models.Machine.name).all()
+
+    # 停止中設備
+    inactive_machines = db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+        models.Machine.is_active == False,
+    ).order_by(models.Machine.name).all()
+
+    # 設備グループ（machine_type が同じもの）
+    groups: dict[str, list[str]] = {}
+    for m in active_machines:
+        if m.machine_type:
+            groups.setdefault(m.machine_type, []).append(m.name)
+
+    # メンテナンス枠（未来）
+    maint_list = db.query(models.MachineMaintenance).filter(
+        models.MachineMaintenance.tenant_id == tenant_id,
+        models.MachineMaintenance.end_datetime >= now,
+    ).order_by(models.MachineMaintenance.start_datetime).all()
+    machine_name_map = {m.id: m.name for m in db.query(models.Machine).filter(
+        models.Machine.tenant_id == tenant_id,
+    ).all()}
+
+    # カレンダー例外（今後3ヶ月）
+    holidays = db.query(models.CalendarHoliday).filter(
+        models.CalendarHoliday.tenant_id == tenant_id,
+        models.CalendarHoliday.date >= today,
+        models.CalendarHoliday.date <= future,
+    ).order_by(models.CalendarHoliday.date).all()
+
+    # ロック済み工程
+    locked_ops = db.query(models.Operation).filter(
+        models.Operation.tenant_id == tenant_id,
+        models.Operation.schedule_locked == True,
+    ).all()
+
+    # 設備固定工程
+    machine_locked_ops = db.query(models.Operation).filter(
+        models.Operation.tenant_id == tenant_id,
+        models.Operation.machine_locked == True,
+    ).all()
+
+    return {
+        "machine_groups": [
+            {"type": k, "machines": v}
+            for k, v in groups.items()
+        ],
+        "active_machine_count": len(active_machines),
+        "inactive_machines": [
+            {"id": m.id, "name": m.name, "type": m.machine_type}
+            for m in inactive_machines
+        ],
+        "upcoming_maintenance": [
+            {
+                "machine_id": mw.machine_id,
+                "machine": machine_name_map.get(mw.machine_id, f"ID:{mw.machine_id}"),
+                "start": mw.start_datetime.strftime("%Y/%m/%d %H:%M"),
+                "end": mw.end_datetime.strftime("%Y/%m/%d %H:%M"),
+                "reason": mw.reason,
+            }
+            for mw in maint_list
+        ],
+        "calendar_exceptions": [
+            {
+                "date": str(h.date),
+                "working_hours": h.working_hours,
+                "name": h.holiday_name,
+                "type": "全休" if h.working_hours == 0 else f"短縮稼働 {h.working_hours}h",
+            }
+            for h in holidays
+        ],
+        "locked_operations": [
+            {
+                "id": op.id,
+                "order_number": op.order.order_number if op.order else "?",
+                "sequence": op.sequence,
+                "planned_start": op.planned_start.strftime("%Y/%m/%d %H:%M") if op.planned_start else None,
+                "planned_end": op.planned_end.strftime("%Y/%m/%d %H:%M") if op.planned_end else None,
+            }
+            for op in locked_ops
+        ],
+        "locked_operations_count": len(locked_ops),
+        "machine_locked_count": len(machine_locked_ops),
+    }
+
+
 @router.post("/chat")
 def ai_chat(
     req: ChatRequest,
