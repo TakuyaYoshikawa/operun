@@ -164,6 +164,10 @@ def _build_operation_inputs(db: Session, tenant_id: int) -> List[OperationInput]
             not_before_dt = datetime(nb.year, nb.month, nb.day, 0, 0, 0)
 
         schedule_locked = getattr(op, "schedule_locked", False) or False
+        # 着手中・完了の工程は自動ロック（再スケジュールで日時・設備を変更しない）
+        op_status = getattr(op, "op_status", "not_started") or "not_started"
+        if op_status in ("in_progress", "done"):
+            schedule_locked = True
         result.append(OperationInput(
             order_id=op.order.id,
             order_number=op.order.order_number,

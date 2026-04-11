@@ -105,10 +105,11 @@ function GanttBar({
   const left  = offsetDays * dayWidth
   const width = Math.max(durationDays * dayWidth, 6)
 
-  const color   = getOrderColor(task.order_id)
+  const color      = getOrderColor(task.order_id)
   const productName = task.text.includes(' / ') ? task.text.split(' / ')[1] : task.text
-  const isDone  = task.op_status === 'done'
-  const draggable = !task.is_locked && !isDone
+  const isDone      = task.op_status === 'done'
+  const isInProgress = task.op_status === 'in_progress'
+  const draggable   = !task.is_locked && !isDone && !isInProgress
 
   return (
     <div
@@ -125,12 +126,16 @@ function GanttBar({
         outlineOffset: task.is_delayed ? '-1px' : undefined,
         cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
         position: 'absolute',
+        backgroundImage: isInProgress
+          ? 'repeating-linear-gradient(45deg, rgba(255,255,255,0.15) 0px, rgba(255,255,255,0.15) 4px, transparent 4px, transparent 10px)'
+          : undefined,
       }}
       className="top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden transition-opacity select-none"
     >
       {isDone && <span className="mr-1">✓</span>}
-      {task.is_locked && !isDone && <span className="mr-1 opacity-80">🔒</span>}
-      {task.is_urgent && !isDone && <span className="mr-1 text-yellow-200 font-bold">!</span>}
+      {isInProgress && <span className="mr-1">▶</span>}
+      {task.is_locked && !isDone && !isInProgress && <span className="mr-1 opacity-80">🔒</span>}
+      {task.is_urgent && !isDone && !isInProgress && <span className="mr-1 text-yellow-200 font-bold">!</span>}
       {draftMode && !isDragging && <span className="mr-1 opacity-70">✎</span>}
       <span className="truncate flex-1 min-w-0">{productName}</span>
       {draggable && (
@@ -256,6 +261,13 @@ function OperationDetailModal({
   const status      = task.op_status ?? 'not_started'
   const statusInfo  = OP_STATUS_LABEL[status] ?? OP_STATUS_LABEL.not_started
   const isDone      = status === 'done'
+  const isInProgress = status === 'in_progress'
+
+  const startMut = useMutation({
+    mutationFn: () => operationsApi.start(opId),
+    onSuccess: () => { onChanged(); onClose() },
+    onError: () => alert('着手の登録に失敗しました'),
+  })
 
   const completeMut = useMutation({
     mutationFn: () => operationsApi.complete(opId, {
@@ -317,7 +329,14 @@ function OperationDetailModal({
         {/* 完了済みの場合 */}
         {isDone && (
           <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 text-center mb-4">
-            ✓ この工程は完了済みです（自動固定）
+            ✓ この工程は完了済みです（スケジュール変更対象外）
+          </div>
+        )}
+
+        {/* 着手中の場合 */}
+        {isInProgress && !isDone && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-700 text-center mb-4">
+            ▶ 着手中（スケジュール変更対象外）
           </div>
         )}
 
@@ -357,8 +376,19 @@ function OperationDetailModal({
 
         {/* アクションボタン */}
         <div className="space-y-2">
-          {/* 固定 / 固定解除（完了時は非表示。完了=自動固定のため） */}
-          {!isDone && (
+          {/* 着手ボタン（未着手のみ） */}
+          {status === 'not_started' && (
+            <button
+              onClick={() => startMut.mutate()}
+              disabled={startMut.isPending}
+              className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+            >
+              {startMut.isPending ? '処理中...' : '▶ 着手する'}
+            </button>
+          )}
+
+          {/* 固定 / 固定解除（完了・着手中は非表示。自動固定のため） */}
+          {!isDone && !isInProgress && (
             <button
               onClick={() => lockMut.mutate()}
               disabled={lockMut.isPending}
@@ -609,6 +639,18 @@ export default function GanttPage() {
   const lockMut = useMutation({
     mutationFn: (opId: number) => scheduleApi.toggleLock(opId),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['gantt'] }); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
+  })
+
+  const tableStartMut = useMutation({
+    mutationFn: (opId: number) => operationsApi.start(opId),
+    onSuccess: invalidate,
+    onError: () => alert('着手の登録に失敗しました'),
+  })
+
+  const tableFinishMut = useMutation({
+    mutationFn: (opId: number) => operationsApi.complete(opId),
+    onSuccess: invalidate,
+    onError: () => alert('完了の登録に失敗しました'),
   })
 
   // ★ 早期returnより前に全フックを呼ぶ (React rules of hooks)
@@ -1340,8 +1382,9 @@ export default function GanttPage() {
                     <th className="text-left px-3 py-2.5 font-medium">終了予定</th>
                     <th className="text-right px-3 py-2.5 font-medium">作業時間</th>
                     <th className="text-left px-3 py-2.5 font-medium">納期</th>
-                    <th className="text-left px-3 py-2.5 font-medium">状態</th>
+                    <th className="text-left px-3 py-2.5 font-medium">進捗</th>
                     <th className="px-3 py-2.5 text-center">ロック</th>
+                    {!viewDraft && <th className="px-3 py-2.5 text-center">操作</th>}
                     {viewDraft && <th className="px-3 py-2.5"></th>}
                   </tr>
                 </thead>
@@ -1364,10 +1407,12 @@ export default function GanttPage() {
                         <td className="px-3 py-2.5 text-gray-500 tabular-nums text-right whitespace-nowrap">{durationH(t.start_date, t.end_date)}h</td>
                         <td className={`px-3 py-2.5 tabular-nums whitespace-nowrap font-medium ${t.is_delayed ? 'text-red-600' : 'text-gray-600'}`}>{t.due_date}</td>
                         <td className="px-3 py-2.5">
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 flex-wrap">
+                            {t.op_status === 'done'        && <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">✓ 完了</span>}
+                            {t.op_status === 'in_progress' && <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">▶ 着手中</span>}
+                            {t.op_status === 'not_started' && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">未着手</span>}
                             {t.is_urgent  && <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">特急</span>}
                             {t.is_delayed && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700">⚠ 遅延</span>}
-                            {!t.is_urgent && !t.is_delayed && <span className="text-gray-300">—</span>}
                           </div>
                         </td>
                         <td className="px-3 py-2.5 text-center">
@@ -1383,6 +1428,27 @@ export default function GanttPage() {
                             {t.is_locked ? '🔒' : '🔓'}
                           </button>
                         </td>
+                        {!viewDraft && (
+                          <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                            {t.op_status === 'not_started' && (
+                              <button
+                                onClick={() => { const id = parseInt(t.id.replace('op-',''),10); tableStartMut.mutate(id) }}
+                                disabled={tableStartMut.isPending}
+                                className="px-2 py-1 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-60"
+                              >▶ 着手</button>
+                            )}
+                            {t.op_status === 'in_progress' && (
+                              <button
+                                onClick={() => { const id = parseInt(t.id.replace('op-',''),10); tableFinishMut.mutate(id) }}
+                                disabled={tableFinishMut.isPending}
+                                className="px-2 py-1 rounded-md bg-green-600 text-white text-xs font-medium hover:bg-green-700 disabled:opacity-60"
+                              >✓ 完了</button>
+                            )}
+                            {t.op_status === 'done' && (
+                              <span className="text-gray-300 text-xs">—</span>
+                            )}
+                          </td>
+                        )}
                         {viewDraft && (
                           <td className="px-3 py-2.5">
                             <button
