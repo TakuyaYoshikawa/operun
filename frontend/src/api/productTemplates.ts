@@ -21,7 +21,7 @@ export interface ProductTemplate {
 export interface TemplateOperationIn {
   sequence: number
   machine_id: number
-  process_id: number | null
+  process_id?: number | null
   hours_per_unit: number
 }
 

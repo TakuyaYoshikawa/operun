@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { machinesApi, processesApi } from '../api/machines'
-import type { Machine, MachineMaintenance, Process } from '../api/machines'
+import { machinesApi } from '../api/machines'
+import type { Machine, MachineMaintenance } from '../api/machines'
 import { customersApi } from '../api/customers'
 import type { Customer } from '../api/customers'
 import { calendarApi } from '../api/calendar'
@@ -54,11 +54,10 @@ function MachineTypeInput({ value, onChange, existingTypes }: {
   )
 }
 
-type Tab = 'machines' | 'processes' | 'customers' | 'calendar' | 'templates' | 'settings'
+type Tab = 'machines' | 'customers' | 'calendar' | 'templates' | 'settings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'machines', label: '設備マスタ' },
-  { id: 'processes', label: '工程マスタ' },
   { id: 'customers', label: '顧客マスタ' },
   { id: 'calendar', label: 'カレンダー' },
   { id: 'templates', label: '品番テンプレート' },
@@ -77,7 +76,6 @@ function getApiError(err: unknown): string {
 
 const TAB_CONTEXT: Record<Tab, string> = {
   machines:  '設備マスタ（create_machine ツールで登録できます。設備名・コード・タイプ・段取り時間などを指定してください）',
-  processes: '工程マスタ（create_process ツールで登録できます。工程名・コード・標準時間・対象設備タイプを指定してください）',
   customers: '顧客マスタ（create_customer ツールで登録できます。会社名・コード・担当者名・電話・メールを指定してください）',
   calendar:  'カレンダー例外日（add_calendar_exception ツールで登録できます。日付・稼働時間・名前を指定してください）',
   templates: '品番テンプレート（現在AIから直接登録できません。手動フォームをご利用ください）',
@@ -115,7 +113,7 @@ function AiPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
       }])
       // マスタ系クエリを再取得
       qc.invalidateQueries({ queryKey: ['machines'] })
-      qc.invalidateQueries({ queryKey: ['processes'] })
+
       qc.invalidateQueries({ queryKey: ['customers'] })
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'エラーが発生しました。再試行してください。' }])
@@ -235,18 +233,6 @@ export default function MastersPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['maintenance', maintMachineId] }),
   })
 
-  // ── 工程 ──────────────────────────────────────────────────────────────────
-  const { data: processes } = useQuery({
-    queryKey: ['processes'],
-    queryFn: () => processesApi.list().then(r => r.data),
-  })
-  const [pForm, setPForm] = useState({ name: '', code: '', standard_time_per_unit: 10 })
-  const [pEditId, setPEditId] = useState<number | null>(null)
-  const createP = useMutation({ mutationFn: processesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['processes'] }); resetP() } })
-  const updateP = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Process> }) => processesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['processes'] }); resetP() } })
-  const deleteP = useMutation({ mutationFn: processesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['processes'] }), onError: (err) => alert(getApiError(err)) })
-  const resetP = () => { setPForm({ name: '', code: '', standard_time_per_unit: 10 }); setPEditId(null) }
-
   // ── 顧客 ──────────────────────────────────────────────────────────────────
   const { data: customers } = useQuery({
     queryKey: ['customers'],
@@ -273,7 +259,7 @@ export default function MastersPage() {
   })
   const deleteT = useMutation({ mutationFn: productTemplatesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }) })
   const resetT = () => { setTForm({ product_code: '', product_name: '', note: '' }); setTOps([]); setTEditId(null) }
-  const addTOp = () => setTOps(ops => [...ops, { sequence: ops.length + 1, machine_id: machines?.[0]?.id ?? 0, process_id: null, hours_per_unit: 1.0 }])
+  const addTOp = () => setTOps(ops => [...ops, { sequence: ops.length + 1, machine_id: machines?.[0]?.id ?? 0, hours_per_unit: 1.0 }])
   const removeTOp = (i: number) => setTOps(ops => ops.filter((_, idx) => idx !== i).map((op, idx) => ({ ...op, sequence: idx + 1 })))
 
   // ── カレンダー ─────────────────────────────────────────────────────────────
@@ -518,69 +504,6 @@ export default function MastersPage() {
               )}
             </div>
           )}
-        </div>
-      )}
-
-      {/* 工程マスタ */}
-      {tab === 'processes' && (
-        <div>
-          <form
-            onSubmit={e => { e.preventDefault(); pEditId ? updateP.mutate({ id: pEditId, data: pForm }) : createP.mutate(pForm) }}
-            className="bg-white border border-gray-200 rounded-xl p-5 mb-5 shadow-sm grid grid-cols-3 gap-4"
-          >
-            <h2 className="col-span-3 text-base font-semibold text-gray-700">{pEditId ? '工程編集' : '工程追加'}</h2>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">工程コード *</label>
-              <input required value={pForm.code} disabled={!!pEditId} onChange={e => setPForm(f => ({ ...f, code: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50" placeholder="P01" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">工程名 *</label>
-              <input required value={pForm.name} onChange={e => setPForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="旋削" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">標準時間（分/個）</label>
-              <input type="number" min={0.1} step={0.1} value={pForm.standard_time_per_unit}
-                onChange={e => setPForm(f => ({ ...f, standard_time_per_unit: Number(e.target.value) }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div className="col-span-3 flex gap-3 justify-end">
-              {pEditId && <button type="button" onClick={resetP} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">キャンセル</button>}
-              <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-                {pEditId ? '更新' : '追加'}
-              </button>
-            </div>
-          </form>
-
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
-                <tr>
-                  <th className="px-4 py-3 text-left">コード</th>
-                  <th className="px-4 py-3 text-left">工程名</th>
-                  <th className="px-4 py-3 text-right">標準時間（分/個）</th>
-                  <th className="px-4 py-3 text-center">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {processes?.length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">工程データがありません</td></tr>
-                )}
-                {processes?.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-mono text-gray-600">{p.code}</td>
-                    <td className="px-4 py-3 font-medium text-gray-800">{p.name}</td>
-                    <td className="px-4 py-3 text-right text-gray-600">{p.standard_time_per_unit}</td>
-                    <td className="px-4 py-3 text-center">
-                      <button onClick={() => { setPForm({ name: p.name, code: p.code, standard_time_per_unit: p.standard_time_per_unit }); setPEditId(p.id) }} className="text-blue-500 hover:text-blue-700 mr-3 text-xs">編集</button>
-                      <button onClick={() => { if (confirm('削除しますか？')) deleteP.mutate(p.id) }} className="text-red-400 hover:text-red-600 text-xs">削除</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </div>
       )}
 
