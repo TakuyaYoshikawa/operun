@@ -5,6 +5,7 @@ import { machinesApi } from '../api/machines'
 import { settingsApi } from '../api/settings'
 import { operationsApi } from '../api/operations'
 import { aiApi } from '../api/ai'
+import { OrderModal } from '../components/OrderModal'
 import type { ChatMessage } from '../api/ai'
 import type { GanttTask, MachineLoad } from '../api/schedule'
 
@@ -742,7 +743,8 @@ export default function GanttPage() {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [viewDraft, setViewDraft] = useState(false)
   const [editTask, setEditTask] = useState<GanttTask | null>(null)
-  const [detailTask, setDetailTask] = useState<GanttTask | null>(null)
+  const [orderModalId, setOrderModalId] = useState<number | null>(null)
+  const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [tabMode, setTabMode] = useState<TabMode>('gantt')
   const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
@@ -1073,7 +1075,7 @@ export default function GanttPage() {
     if (viewDraft) {
       setEditTask(task)
     } else {
-      setDetailTask(task)
+      setOrderModalId(task.order_id)
     }
   }
 
@@ -1221,6 +1223,13 @@ export default function GanttPage() {
             >時間</button>
           </div>
           )}
+          {/* 新規受注 */}
+          <button
+            onClick={() => setShowNewOrderModal(true)}
+            className="border border-blue-400 text-blue-600 bg-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50"
+          >
+            ＋ 新規受注
+          </button>
           {/* スケジュール最適化 */}
           <button
             onClick={() => runMut.mutate()}
@@ -1541,11 +1550,19 @@ export default function GanttPage() {
         />
       )}
 
-      {/* 工程詳細 / 完了モーダル */}
-      {detailTask && (
-        <OperationDetailModal
-          task={detailTask}
-          onClose={() => setDetailTask(null)}
+      {/* 受注詳細モーダル（バークリック） */}
+      {orderModalId && (
+        <OrderModal
+          orderId={orderModalId}
+          onClose={() => setOrderModalId(null)}
+          onChanged={invalidate}
+        />
+      )}
+
+      {/* 新規受注モーダル */}
+      {showNewOrderModal && (
+        <OrderModal
+          onClose={() => setShowNewOrderModal(false)}
           onChanged={invalidate}
         />
       )}
