@@ -4,6 +4,7 @@ import { machinesApi } from '../api/machines'
 import { scheduleApi } from '../api/schedule'
 import { ordersApi } from '../api/orders'
 import { customersApi } from '../api/customers'
+import { CustomerCreateModal } from '../components/CustomerCreateModal'
 import type { DeliverySimResult, DeliverySimScenario } from '../api/schedule'
 
 interface SimOp {
@@ -34,6 +35,7 @@ function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose,
   const [quantity, setQuantity] = useState(1)
   const [customerId, setCustomerId] = useState<number | ''>('')
   const [note, setNote] = useState('')
+  const [showCustomerModal, setShowCustomerModal] = useState(false)
 
   const createMut = useMutation({
     mutationFn: async () => {
@@ -112,7 +114,16 @@ function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose,
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">顧客</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">取引先</label>
+              <button
+                type="button"
+                onClick={() => setShowCustomerModal(true)}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+              >
+                ＋ 新規登録
+              </button>
+            </div>
             <select
               value={customerId} onChange={e => setCustomerId(e.target.value === '' ? '' : Number(e.target.value))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
@@ -121,6 +132,16 @@ function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose,
               {customers?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
+
+          {showCustomerModal && (
+            <CustomerCreateModal
+              onClose={() => setShowCustomerModal(false)}
+              onCreated={(id) => {
+                setCustomerId(id)
+                setShowCustomerModal(false)
+              }}
+            />
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">備考</label>

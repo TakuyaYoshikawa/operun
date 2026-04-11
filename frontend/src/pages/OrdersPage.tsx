@@ -4,6 +4,7 @@ import { ordersApi } from '../api/orders'
 import { machinesApi } from '../api/machines'
 import { processesApi } from '../api/machines'
 import { customersApi } from '../api/customers'
+import { CustomerCreateModal } from '../components/CustomerCreateModal'
 import type { OrderCreate, Order, OrderStatus, Operation, OperationCreate } from '../api/orders'
 
 const PRIORITY_LABEL: Record<number, string> = { 1: '特急', 2: '高', 3: '通常' }
@@ -305,6 +306,7 @@ export default function OrdersPage() {
   const [form, setForm] = useState<OrderCreate>(emptyForm)
   const [editId, setEditId] = useState<number | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [showCustomerModal, setShowCustomerModal] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['orders'],
@@ -445,7 +447,16 @@ export default function OrdersPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">顧客</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">取引先</label>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerModal(true)}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  ＋ 新規登録
+                </button>
+              </div>
               <select
                 value={form.customer_id ?? ''}
                 onChange={e => setForm(f => ({ ...f, customer_id: e.target.value ? Number(e.target.value) : null }))}
@@ -475,6 +486,16 @@ export default function OrdersPage() {
             </div>
           </form>
         </div>
+      )}
+
+      {showCustomerModal && (
+        <CustomerCreateModal
+          onClose={() => setShowCustomerModal(false)}
+          onCreated={(id) => {
+            setForm(f => ({ ...f, customer_id: id }))
+            setShowCustomerModal(false)
+          }}
+        />
       )}
 
       {isLoading ? (
