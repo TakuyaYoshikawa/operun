@@ -318,13 +318,9 @@ export default function GanttPage() {
     queryFn: () => scheduleApi.getGantt(viewDraft).then(r => r.data),
   })
 
-  // 下書きの有無を確認（currentDataが必要な場合のみ）
-  const { data: currentData } = useQuery({
-    queryKey: ['gantt'],
-    queryFn: () => scheduleApi.getGantt(false).then(r => r.data),
-    enabled: viewDraft,
-  })
-  const hasDraft = data?.has_draft ?? currentData?.has_draft ?? false
+  // has_draft はバックエンドが draft_start != null の有無を常に返すため、
+  // 現行・下書きどちらのクエリでも同じ値になる
+  const hasDraft = data?.has_draft ?? false
 
   const createDraftMut = useMutation({
     mutationFn: scheduleApi.createDraft,
