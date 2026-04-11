@@ -28,6 +28,12 @@ const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'ai',       label: 'AIアシスタント',     icon: '🤖' },
 ]
 
+// プロ版機能（未実装・クリック不可）
+const PRO_NAV: { label: string; icon: string }[] = [
+  { label: '在庫管理', icon: '📦' },
+  { label: '人員管理', icon: '👷' },
+]
+
 // 設定メニュー（サイドバー下部・ドロワー内に分離）
 const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'constraints', label: '制約設定の確認', icon: '🔒' },
@@ -87,6 +93,20 @@ function Layout({ page, setPage, onLogout }: {
               <span>{n.label}</span>
             </button>
           ))}
+          {/* プロ版機能（未実装・クリック不可） */}
+          <div className="pt-2">
+            <div className="text-[10px] font-semibold text-gray-300 uppercase tracking-wider px-2 mb-1">Pro</div>
+            {PRO_NAV.map(n => (
+              <div
+                key={n.label}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-left cursor-not-allowed select-none"
+              >
+                <span className="opacity-40">{n.icon}</span>
+                <span className="text-gray-300">{n.label}</span>
+                <span className="ml-auto text-[10px] text-gray-300 font-normal whitespace-nowrap">（プロ版機能）</span>
+              </div>
+            ))}
+          </div>
         </nav>
         {/* 設定セクション（ログアウトと分離） */}
         <div className="px-3 pt-3 pb-1 border-t border-gray-100">
