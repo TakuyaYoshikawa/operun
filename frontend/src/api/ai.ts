@@ -34,4 +34,16 @@ export const aiApi = {
 
   agent: (messages: ChatMessage[]) =>
     api.post<{ reply: string; tool_calls: { tool: string; input: Record<string, unknown>; result: unknown }[] }>('/ai/agent', { messages }),
+
+  constraintsSummary: () =>
+    api.get<{
+      machine_groups: { type: string; machines: string[] }[]
+      active_machine_count: number
+      inactive_machines: { id: number; name: string; type: string | null }[]
+      upcoming_maintenance: { machine: string; start: string; end: string; reason: string | null }[]
+      calendar_exceptions: { date: string; working_hours: number; name: string | null; type: string }[]
+      locked_operations: { id: number; order_number: string; sequence: number; planned_start: string | null; planned_end: string | null }[]
+      locked_operations_count: number
+      machine_locked_count: number
+    }>('/ai/constraints'),
 }
