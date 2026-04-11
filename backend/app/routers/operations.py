@@ -252,6 +252,7 @@ def complete_operation(
     now = datetime.now()
     op.op_status = "done"
     op.actual_end = now
+    op.schedule_locked = True  # 完了工程は再スケジュールで変更しない
 
     if body.actual_hours is not None:
         op.actual_hours = body.actual_hours
