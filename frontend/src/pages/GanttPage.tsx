@@ -122,6 +122,7 @@ function GanttBar({
       className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer hover:brightness-90 transition-all select-none"
     >
       {isDone && <span className="mr-1">✓</span>}
+      {task.is_locked && !isDone && <span className="mr-1 opacity-80">🔒</span>}
       {task.is_urgent && !isDone && <span className="mr-1 text-yellow-200 font-bold">!</span>}
       {draftMode && <span className="mr-1 opacity-70">✎</span>}
       <span className="truncate">{productName}</span>
@@ -223,17 +224,19 @@ const OP_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
 function OperationDetailModal({
   task,
   onClose,
-  onCompleted,
+  onChanged,
 }: {
   task: GanttTask
   onClose: () => void
-  onCompleted: () => void
+  onChanged: () => void
 }) {
   const [actualHours, setActualHours] = useState('')
   const [note, setNote]               = useState('')
-  const [confirmed, setConfirmed]     = useState(false)
+  const [showCompleteForm, setShowCompleteForm] = useState(false)
+  // ローカルのロック状態（楽観的更新用）
+  const [isLocked, setIsLocked] = useState(task.is_locked)
 
-  const opId = parseInt(task.id.replace('op-', ''), 10)
+  const opId        = parseInt(task.id.replace('op-', ''), 10)
   const productName = task.text.includes(' / ') ? task.text.split(' / ')[1] : task.text
   const orderNum    = task.text.includes(' / ') ? task.text.split(' / ')[0] : ''
   const status      = task.op_status ?? 'not_started'
@@ -245,7 +248,14 @@ function OperationDetailModal({
       actual_hours: actualHours ? parseFloat(actualHours) : undefined,
       actual_note: note || undefined,
     }),
-    onSuccess: () => { onCompleted() },
+    onSuccess: () => { onChanged(); onClose() },
+  })
+
+  const lockMut = useMutation({
+    mutationFn: () => scheduleApi.toggleLock(opId),
+    onMutate: () => setIsLocked(v => !v),   // 楽観的更新
+    onSuccess: () => { onChanged() },
+    onError: () => setIsLocked(v => !v),    // 失敗時に戻す
   })
 
   return (
@@ -259,9 +269,14 @@ function OperationDetailModal({
             <h3 className="text-base font-bold text-gray-800">{productName}</h3>
             <p className="text-xs text-gray-400 mt-0.5">{orderNum}　工程 #{task.sequence}</p>
           </div>
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusInfo.cls}`}>
-            {statusInfo.label}
-          </span>
+          <div className="flex items-center gap-2">
+            {isLocked && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">🔒 固定</span>
+            )}
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusInfo.cls}`}>
+              {statusInfo.label}
+            </span>
+          </div>
         </div>
 
         {/* 詳細情報 */}
@@ -270,95 +285,122 @@ function OperationDetailModal({
           <Row label="予定開始" value={fmtDt(task.start_date)} />
           <Row label="予定終了" value={fmtDt(task.end_date)} />
           <Row label="納期" value={task.due_date} accent={task.is_delayed ? 'red' : undefined} />
-          {task.is_urgent && (
-            <div className="pt-1">
-              <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium">特急</span>
-            </div>
-          )}
-          {task.is_delayed && (
-            <div className="pt-0.5">
-              <span className="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">⚠ 納期超過</span>
+          {(task.is_urgent || task.is_delayed) && (
+            <div className="pt-1 flex gap-2 flex-wrap">
+              {task.is_urgent  && <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium">特急</span>}
+              {task.is_delayed && <span className="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">⚠ 納期超過</span>}
             </div>
           )}
         </div>
 
-        {/* 完了済みの場合 */}
-        {isDone ? (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 text-center mb-4">
-            この工程は完了済みです
+        {/* 固定の説明 */}
+        {isLocked && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-700 mb-3">
+            この工程はスケジュール最適化の対象外です。日時・設備が変更されません。
           </div>
-        ) : (
-          <>
-            {/* 完了入力フォーム */}
-            {confirmed ? (
-              <div className="space-y-3 mb-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    実績時間（任意）
-                    <span className="text-gray-400 font-normal ml-1">省略時は予定時間を使用</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={actualHours}
-                      onChange={e => setActualHours(e.target.value)}
-                      placeholder="例: 8.5"
-                      className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                    />
-                    <span className="text-sm text-gray-500">時間</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">メモ（任意）</label>
-                  <textarea
-                    value={note}
-                    onChange={e => setNote(e.target.value)}
-                    rows={2}
-                    placeholder="完了時のメモを入力..."
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 resize-none"
-                  />
-                </div>
-              </div>
-            ) : null}
+        )}
 
-            {/* ボタン */}
-            <div className="flex gap-2">
+        {/* 完了済みの場合 */}
+        {isDone && (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 text-center mb-4">
+            ✓ この工程は完了済みです（自動固定）
+          </div>
+        )}
+
+        {/* 完了入力フォーム */}
+        {!isDone && showCompleteForm && (
+          <div className="space-y-3 mb-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                実績時間（任意）
+                <span className="text-gray-400 font-normal ml-1">省略時は予定時間を使用</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={actualHours}
+                  onChange={e => setActualHours(e.target.value)}
+                  placeholder="例: 8.5"
+                  className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                />
+                <span className="text-sm text-gray-500">時間</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">メモ（任意）</label>
+              <textarea
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                rows={2}
+                placeholder="完了時のメモを入力..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 resize-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* アクションボタン */}
+        <div className="space-y-2">
+          {/* 固定 / 固定解除（完了時は非表示。完了=自動固定のため） */}
+          {!isDone && (
+            <button
+              onClick={() => lockMut.mutate()}
+              disabled={lockMut.isPending}
+              className={`w-full px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 ${
+                isLocked
+                  ? 'bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100'
+                  : 'bg-gray-50 border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              {lockMut.isPending
+                ? '処理中...'
+                : isLocked
+                  ? '🔓 固定を解除する'
+                  : '🔒 スケジュールを固定する'}
+            </button>
+          )}
+
+          {/* 完了ボタン */}
+          {!isDone && (
+            !showCompleteForm ? (
               <button
-                onClick={onClose}
-                className="flex-1 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+                onClick={() => setShowCompleteForm(true)}
+                className="w-full bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700"
               >
-                閉じる
+                ✓ 工程完了にする
               </button>
-              {!confirmed ? (
+            ) : (
+              <div className="flex gap-2">
                 <button
-                  onClick={() => setConfirmed(true)}
-                  className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700"
+                  onClick={() => setShowCompleteForm(false)}
+                  className="flex-1 border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
                 >
-                  工程完了にする
+                  戻る
                 </button>
-              ) : (
                 <button
                   onClick={() => completeMut.mutate()}
                   disabled={completeMut.isPending}
                   className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-60"
                 >
-                  {completeMut.isPending ? '処理中...' : '✓ 完了を確定'}
+                  {completeMut.isPending ? '処理中...' : '完了を確定'}
                 </button>
-              )}
-            </div>
-            {completeMut.isError && (
-              <p className="text-xs text-red-500 mt-2 text-center">エラーが発生しました。再試行してください。</p>
-            )}
-          </>
-        )}
+              </div>
+            )
+          )}
 
-        {isDone && (
-          <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">
+          {completeMut.isError && (
+            <p className="text-xs text-red-500 text-center">エラーが発生しました。再試行してください。</p>
+          )}
+
+          <button
+            onClick={onClose}
+            className="w-full border border-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+          >
             閉じる
           </button>
-        )}
+        </div>
       </div>
     </div>
   )
@@ -1011,10 +1053,7 @@ export default function GanttPage() {
         <OperationDetailModal
           task={detailTask}
           onClose={() => setDetailTask(null)}
-          onCompleted={() => {
-            setDetailTask(null)
-            invalidate()
-          }}
+          onChanged={invalidate}
         />
       )}
     </div>
