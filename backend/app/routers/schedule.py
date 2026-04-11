@@ -367,6 +367,8 @@ def get_gantt_data(
             "is_urgent": op.is_urgent,
             "is_delayed": is_delayed,
             "is_locked": getattr(op, "schedule_locked", False) or False,
+            "op_status": op.op_status or "not_started",
+            "sequence": op.sequence,
             "color": "#e53e3e" if is_delayed else ("#f6ad55" if op.is_urgent else "#4aab68"),
         })
 
