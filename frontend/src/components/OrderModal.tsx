@@ -192,7 +192,7 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
   })
   const { data: customers } = useQuery({
     queryKey: ['customers'],
-    queryFn: () => customersApi.list().then(r => r.data.items),
+    queryFn: () => customersApi.list().then(r => r.data),
   })
   const { data: templates } = useQuery({
     queryKey: ['templates'],
@@ -375,7 +375,7 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
                   </div>
                   <select value={newForm.customer_id ?? ''} onChange={e => setNewForm(f => ({ ...f, customer_id: e.target.value ? Number(e.target.value) : null }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                     <option value="">未選択</option>
-                    {customers?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {customers?.items?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -440,7 +440,7 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
                     </div>
                     <select value={editForm.customer_id ?? ''} onChange={e => updateField('customer_id', e.target.value ? Number(e.target.value) : null)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
                       <option value="">未選択</option>
-                      {customers?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      {customers?.items?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
                   <div className="col-span-2">

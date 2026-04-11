@@ -27,7 +27,7 @@ function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose,
   const queryClient = useQueryClient()
   const { data: customers } = useQuery({
     queryKey: ['customers'],
-    queryFn: () => customersApi.list().then(r => r.data.items),
+    queryFn: () => customersApi.list().then(r => r.data),
   })
 
   const [orderNumber, setOrderNumber] = useState('')
@@ -129,7 +129,7 @@ function RegisterModal({ productName, dueDate, priority, isUrgent, ops, onClose,
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
             >
               <option value="">選択しない</option>
-              {customers?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {customers?.items?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
