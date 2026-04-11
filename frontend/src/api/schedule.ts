@@ -48,7 +48,7 @@ export interface DeliverySimOperation {
   planned_end: string | null
 }
 
-export interface DeliverySimResult {
+export interface DeliverySimScenario {
   feasible: boolean
   completion_date: string | null
   completion_datetime: string | null
@@ -57,6 +57,10 @@ export interface DeliverySimResult {
   affected_orders: string[]
   affected_count: number
   operations: DeliverySimOperation[]
+}
+
+export interface DeliverySimResult extends DeliverySimScenario {
+  urgent: DeliverySimScenario
 }
 
 export const scheduleApi = {

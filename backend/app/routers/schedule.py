@@ -536,32 +536,53 @@ def check_delivery_date(
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    engine_obj = SchedulingEngine(_build_calendars(db, tenant_id))
+    calendars = _build_calendars(db, tenant_id)
     existing = _build_operation_inputs(db, tenant_id)
-    result = engine_obj.simulate_insert(new_ops, existing)
-
-    completion: datetime | None = result["new_order_completion"]
-    feasible = completion is not None
-
-    # 設備名を付与
     machine_map = {m.id: m.name for m in db.query(models.Machine).filter(models.Machine.tenant_id == tenant_id).all()}
-    op_details = [
-        {
-            **op,
-            "machine_name": machine_map.get(op["machine_id"], f"設備#{op['machine_id']}"),
+
+    def _run_sim(ops: list[OperationInput]) -> dict:
+        eng = SchedulingEngine(calendars)
+        res = eng.simulate_insert(ops, existing)
+        completion: datetime | None = res["new_order_completion"]
+        feasible = completion is not None
+        op_details = [
+            {**op, "machine_name": machine_map.get(op["machine_id"], f"設備#{op['machine_id']}")}
+            for op in res.get("operations", [])
+        ]
+        return {
+            "feasible": feasible,
+            "completion_date": _format_date_ja(completion) if completion else None,
+            "completion_datetime": completion.isoformat() if completion else None,
+            "business_days": _calc_business_days(datetime.now(), completion) if completion else None,
+            "on_time": res.get("new_order_delayed") is False if feasible else None,
+            "affected_orders": res["delayed_order_numbers"],
+            "affected_count": res["total_delayed_orders"],
+            "operations": op_details,
         }
-        for op in result.get("operations", [])
+
+    # ── 通常優先度でシミュレーション ──
+    normal_result = _run_sim(new_ops)
+
+    # ── 最優先（特急扱い）でシミュレーション ──
+    urgent_ops = [
+        OperationInput(
+            order_id=op.order_id,
+            order_number=op.order_number,
+            product_name=op.product_name,
+            sequence=op.sequence,
+            machine_id=op.machine_id,
+            duration_hours=op.duration_hours,
+            due_date=op.due_date,
+            priority=1,
+            is_urgent=True,
+        )
+        for op in new_ops
     ]
+    urgent_result = _run_sim(urgent_ops)
 
     return {
-        "feasible": feasible,
-        "completion_date": _format_date_ja(completion) if completion else None,
-        "completion_datetime": completion.isoformat() if completion else None,
-        "business_days": _calc_business_days(datetime.now(), completion) if completion else None,
-        "on_time": result.get("new_order_delayed") is False if feasible else None,
-        "affected_orders": result["delayed_order_numbers"],
-        "affected_count": result["total_delayed_orders"],
-        "operations": op_details,
+        **normal_result,
+        "urgent": urgent_result,
     }
 
 
