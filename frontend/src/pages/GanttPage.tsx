@@ -821,10 +821,6 @@ export default function GanttPage() {
     onSuccess: () => { setEditTask(null); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
   })
 
-  const lockMut = useMutation({
-    mutationFn: (opId: number) => scheduleApi.toggleLock(opId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['gantt'] }); qc.invalidateQueries({ queryKey: ['gantt-draft'] }) },
-  })
 
 
 
