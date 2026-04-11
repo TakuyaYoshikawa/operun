@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi } from '../api/orders'
 import { machinesApi } from '../api/machines'
-import { processesApi } from '../api/machines'
 import { customersApi } from '../api/customers'
 import { CustomerCreateModal } from '../components/CustomerCreateModal'
 import type { OrderCreate, Order, OrderStatus, Operation, OperationCreate } from '../api/orders'
@@ -40,10 +39,6 @@ function OperationsEditor({ order }: { order: Order }) {
     queryKey: ['machines'],
     queryFn: () => machinesApi.list({ is_active: true }).then(r => r.data),
   })
-  const { data: processes } = useQuery({
-    queryKey: ['processes'],
-    queryFn: () => processesApi.list().then(r => r.data),
-  })
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['orders'] })
 
@@ -73,9 +68,6 @@ function OperationsEditor({ order }: { order: Order }) {
     machines?.find(m => m.id === id)?.name ?? `設備#${id}`
   const machineType = (id: number) =>
     machines?.find(m => m.id === id)?.machine_type ?? null
-  const processName = (id: number | null) =>
-    id ? (processes?.find(p => p.id === id)?.name ?? `工程#${id}`) : '—'
-
   // 設備をグループ（machine_type）別に整理
   const machineGroups = (() => {
     if (!machines) return []
@@ -105,7 +97,6 @@ function OperationsEditor({ order }: { order: Order }) {
   const startEdit = (op: Operation) => {
     setOpForm({
       machine_id: op.machine_id,
-      process_id: op.process_id,
       duration_hours: op.duration_hours,
       is_urgent: op.is_urgent,
       machine_locked: op.machine_locked,
@@ -152,7 +143,6 @@ function OperationsEditor({ order }: { order: Order }) {
               {op.machine_locked && (
                 <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded" title="指定した設備に固定">固定</span>
               )}
-              <span className="text-gray-400">{processName(op.process_id)}</span>
               <span className="text-gray-500">{op.duration_hours}h</span>
               {op.is_urgent && (
                 <span className="px-1.5 py-0.5 bg-red-100 text-red-600 text-xs rounded">特急</span>
@@ -229,19 +219,6 @@ function OperationsEditor({ order }: { order: Order }) {
             />
             {opForm.machine_locked ? '設備固定' : 'グループ自動選択'}
           </label>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">工程</label>
-          <select
-            value={opForm.process_id ?? ''}
-            onChange={e => setOpForm(f => ({ ...f, process_id: e.target.value ? Number(e.target.value) : null }))}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-          >
-            <option value="">未選択</option>
-            {processes?.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">所要時間(h) *</label>
