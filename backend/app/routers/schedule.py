@@ -60,14 +60,18 @@ def _build_calendars(db: Session, tenant_id: int) -> dict:
     }
 
     # 設備ごとのメンテナンス枠を一括取得
-    now = datetime.now()
+    from datetime import timezone
+    now_utc = datetime.now(tz=timezone.utc)
     maint_list = db.query(models.MachineMaintenance).filter(
         models.MachineMaintenance.tenant_id == tenant_id,
-        models.MachineMaintenance.end_datetime >= now,  # 過去のものは除外
+        models.MachineMaintenance.end_datetime >= now_utc,  # 過去のものは除外
     ).all()
     maint_map: dict[int, list] = {}
     for mw in maint_list:
-        maint_map.setdefault(mw.machine_id, []).append((mw.start_datetime, mw.end_datetime))
+        # PostgreSQLはタイムゾーン付きで返すため、naiveに統一する
+        s = mw.start_datetime.replace(tzinfo=None) if mw.start_datetime.tzinfo else mw.start_datetime
+        e = mw.end_datetime.replace(tzinfo=None) if mw.end_datetime.tzinfo else mw.end_datetime
+        maint_map.setdefault(mw.machine_id, []).append((s, e))
 
     return {
         m.id: MachineCalendar(
@@ -215,14 +219,6 @@ def run_schedule(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """スケジューリングを実行して下書きカラムに保存する（現行スケジュールは変更しない）。"""
-    import traceback
-    try:
-        return _run_schedule_impl(db, tenant_id, optimizer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"[DEBUG] {type(e).__name__}: {e}\n{traceback.format_exc()}")
-
-
-def _run_schedule_impl(db: Session, tenant_id: int, optimizer: str):
     engine = _build_engine(db, tenant_id, optimizer)
     op_inputs = _build_operation_inputs(db, tenant_id)
 
