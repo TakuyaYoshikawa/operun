@@ -150,9 +150,13 @@ function AiPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
                   {m.tool_calls.map((tc, j) => (
                     <div key={j} className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-gray-600">
                       <span className="font-medium text-blue-600">{tc.tool}</span>
-                      {tc.result && typeof tc.result === 'object' && 'message' in tc.result && (
-                        <span className="ml-2 text-green-600">{String((tc.result as Record<string, unknown>).message)}</span>
-                      )}
+                      {(() => {
+                        const r = tc.result
+                        if (r && typeof r === 'object' && 'message' in (r as object)) {
+                          return <span className="ml-2 text-green-600">{String((r as Record<string, unknown>)['message'])}</span>
+                        }
+                        return null
+                      })()}
                     </div>
                   ))}
                 </div>
