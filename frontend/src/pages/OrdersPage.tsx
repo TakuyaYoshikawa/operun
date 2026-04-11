@@ -223,8 +223,8 @@ function OperationsEditor({ order }: { order: Order }) {
           <label className="flex items-center gap-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg px-2 py-1.5 cursor-pointer select-none">
             <input
               type="checkbox"
-              checked={opForm.machine_locked ?? false}
-              onChange={e => setOpForm(f => ({ ...f, machine_locked: e.target.checked }))}
+              checked={!(opForm.machine_locked ?? false)}
+              onChange={e => setOpForm(f => ({ ...f, machine_locked: !e.target.checked }))}
               className="accent-indigo-600"
             />
             {opForm.machine_locked ? '設備固定' : 'グループ自動選択'}
