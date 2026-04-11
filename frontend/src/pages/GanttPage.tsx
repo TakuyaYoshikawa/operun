@@ -570,6 +570,10 @@ export default function GanttPage() {
   const createDraftMut = useMutation({
     mutationFn: scheduleApi.createDraft,
     onSuccess: () => { invalidate(); setViewDraft(true) },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(detail ?? '現行スケジュールのコピーに失敗しました')
+    },
   })
 
   const runMut = useMutation({
@@ -961,14 +965,16 @@ export default function GanttPage() {
               >下書き ✏️</button>
             </div>
           )}
-          {/* 現行スケジュールをコピーして下書き作成（常時表示） */}
-          <button
-            onClick={() => hasDraft ? setConfirmCopyOpen(true) : createDraftMut.mutate()}
-            disabled={createDraftMut.isPending}
-            className="border border-yellow-400 text-yellow-700 bg-yellow-50 px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-100 disabled:opacity-60"
-          >
-            {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
-          </button>
+          {/* 現行をコピーして下書き作成（非ドラフトモード時のみ表示） */}
+          {!viewDraft && (
+            <button
+              onClick={() => hasDraft ? setConfirmCopyOpen(true) : createDraftMut.mutate()}
+              disabled={createDraftMut.isPending}
+              className="border border-yellow-400 text-yellow-700 bg-yellow-50 px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-100 disabled:opacity-60"
+            >
+              {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
+            </button>
+          )}
           {/* ガント/負荷グラフ 切替 */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
             <button

@@ -382,7 +382,8 @@ def create_draft_from_current(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """現行スケジュール（planned_start/end）をそのまま下書きカラムにコピーする。"""
-    ops = (
+    # 確定済みスケジュールの存在確認
+    planned_ops = (
         db.query(models.Operation)
         .filter(
             models.Operation.tenant_id == tenant_id,
@@ -390,15 +391,33 @@ def create_draft_from_current(
         )
         .all()
     )
-    if not ops:
-        raise HTTPException(status_code=404, detail="コピー元のスケジュールがありません")
+    if not planned_ops:
+        raise HTTPException(
+            status_code=409,
+            detail="確定済みスケジュールがありません。スケジュール最適化後に「✓ 確定」ボタンで確定してからコピーしてください。",
+        )
 
-    for op in ops:
+    # 既存ドラフトを先にクリア（完全リセット）
+    draft_ops = (
+        db.query(models.Operation)
+        .filter(
+            models.Operation.tenant_id == tenant_id,
+            models.Operation.draft_start != None,
+        )
+        .all()
+    )
+    for op in draft_ops:
+        op.draft_start      = None
+        op.draft_end        = None
+        op.draft_machine_id = None
+
+    # 確定済みをコピー
+    for op in planned_ops:
         op.draft_start      = op.planned_start
         op.draft_end        = op.planned_end
         op.draft_machine_id = op.machine_id
     db.commit()
-    return {"created": len(ops)}
+    return {"created": len(planned_ops)}
 
 
 @router.patch("/draft/{operation_id}")
