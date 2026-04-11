@@ -5,8 +5,10 @@ import { machinesApi } from '../api/machines'
 import { customersApi } from '../api/customers'
 import { scheduleApi } from '../api/schedule'
 import { operationsApi } from '../api/operations'
+import { productTemplatesApi } from '../api/productTemplates'
 import { CustomerCreateModal } from './CustomerCreateModal'
 import type { Order, OrderCreate, OrderStatus, Operation, OperationCreate } from '../api/orders'
+import type { ProductTemplate } from '../api/productTemplates'
 
 const PRIORITY_COLOR: Record<number, string> = {
   1: 'bg-red-100 text-red-700',
@@ -178,6 +180,7 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
   const qc = useQueryClient()
   const [createdId, setCreatedId] = useState<number | null>(null)
   const [showCustomerModal, setShowCustomerModal] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<ProductTemplate | null>(null)
 
   // 編集対象のID（作成後は createdId を使う）
   const targetId = createdId ?? orderId
@@ -191,14 +194,40 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
     queryKey: ['customers'],
     queryFn: () => customersApi.list().then(r => r.data.items),
   })
+  const { data: templates } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => productTemplatesApi.list().then(r => r.data),
+  })
 
   // ── 新規作成フォーム ──
   const [newForm, setNewForm] = useState<OrderCreate>({
     order_number: '', product_name: '', product_code: '',
     quantity: 1, due_date: '', priority: 3, status: 'pending', note: '', customer_id: null,
   })
+
+  const applyTemplate = (t: ProductTemplate) => {
+    setSelectedTemplate(t)
+    setNewForm(f => ({ ...f, product_name: t.product_name, product_code: t.product_code }))
+  }
+
   const createMut = useMutation({
-    mutationFn: () => ordersApi.create(newForm),
+    mutationFn: async () => {
+      const res = await ordersApi.create(newForm)
+      const orderId = res.data.id
+      if (selectedTemplate && selectedTemplate.operations.length > 0) {
+        for (const op of selectedTemplate.operations) {
+          await ordersApi.operations.add(orderId, {
+            machine_id: op.machine_id,
+            duration_hours: op.hours_per_unit,
+            machine_locked: false,
+            is_urgent: false,
+            wait_hours_after: 0,
+            not_before_date: null,
+          })
+        }
+      }
+      return res
+    },
     onSuccess: res => {
       qc.invalidateQueries({ queryKey: ['orders'] })
       onChanged?.()
@@ -280,6 +309,38 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
           {/* ── 新規作成フォーム ── */}
           {isCreateMode && (
             <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="space-y-4">
+              {/* テンプレート選択 */}
+              {templates && templates.length > 0 && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <label className="block text-xs font-medium text-blue-700 mb-1.5">品番テンプレートから選択</label>
+                  <select
+                    value={selectedTemplate?.id ?? ''}
+                    onChange={e => {
+                      const t = templates.find(t => t.id === Number(e.target.value))
+                      if (t) applyTemplate(t)
+                      else { setSelectedTemplate(null); setNewForm(f => ({ ...f, product_name: '', product_code: '' })) }
+                    }}
+                    className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  >
+                    <option value="">テンプレートを選択（任意）</option>
+                    {templates.map(t => (
+                      <option key={t.id} value={t.id}>{t.product_code ? `[${t.product_code}] ` : ''}{t.product_name}</option>
+                    ))}
+                  </select>
+                  {selectedTemplate && selectedTemplate.operations.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-[10px] font-medium text-blue-600">登録後に自動追加される工程：</p>
+                      {selectedTemplate.operations.map((op, i) => (
+                        <div key={i} className="text-[10px] text-blue-500 flex gap-2 pl-2">
+                          <span>{i + 1}.</span>
+                          <span>{op.machine_name}</span>
+                          <span className="text-blue-400">{op.hours_per_unit}h</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">受注番号 *</label>
