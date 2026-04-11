@@ -43,17 +43,17 @@ print(f"  テナント: {tenant.name} (id={tenant.id})")
 # ── 設備マスタ ────────────────────────────────────────────────────────────────
 print("設備マスタを投入中...")
 machines_data = [
-    {"code": "M01", "name": "旋盤1号機",       "machine_type": "旋盤",      "daily_capacity_hours": 8.0,  "setup_time_minutes": 30.0, "is_outsource": False},
-    {"code": "M02", "name": "旋盤2号機",       "machine_type": "旋盤",      "daily_capacity_hours": 8.0,  "setup_time_minutes": 30.0, "is_outsource": False},
-    {"code": "M03", "name": "マシニング1号機",  "machine_type": "マシニング", "daily_capacity_hours": 8.0,  "setup_time_minutes": 45.0, "is_outsource": False},
-    {"code": "M04", "name": "マシニング2号機",  "machine_type": "マシニング", "daily_capacity_hours": 8.0,  "setup_time_minutes": 45.0, "is_outsource": False},
-    {"code": "M05", "name": "フライス盤1号機",  "machine_type": "フライス盤", "daily_capacity_hours": 7.0,  "setup_time_minutes": 20.0, "is_outsource": False},
-    {"code": "M06", "name": "研削盤1号機",     "machine_type": "研削盤",    "daily_capacity_hours": 8.0,  "setup_time_minutes": 15.0, "is_outsource": False},
-    {"code": "M07", "name": "ワイヤーカット",   "machine_type": "ワイヤーカット", "daily_capacity_hours": 16.0, "setup_time_minutes": 60.0, "is_outsource": False},
+    {"code": "M01", "name": "旋盤1号機",       "machine_type": "旋盤",           "daily_capacity_hours": 8.0,  "setup_time_minutes": 30.0, "is_outsource": False, "sort_order": 0},
+    {"code": "M02", "name": "旋盤2号機",       "machine_type": "旋盤",           "daily_capacity_hours": 8.0,  "setup_time_minutes": 30.0, "is_outsource": False, "sort_order": 1},
+    {"code": "M03", "name": "マシニング1号機",  "machine_type": "マシニング",      "daily_capacity_hours": 8.0,  "setup_time_minutes": 45.0, "is_outsource": False, "sort_order": 2},
+    {"code": "M04", "name": "マシニング2号機",  "machine_type": "マシニング",      "daily_capacity_hours": 8.0,  "setup_time_minutes": 45.0, "is_outsource": False, "sort_order": 3},
+    {"code": "M05", "name": "フライス盤1号機",  "machine_type": "フライス盤",      "daily_capacity_hours": 7.0,  "setup_time_minutes": 20.0, "is_outsource": False, "sort_order": 4},
+    {"code": "M06", "name": "研削盤1号機",     "machine_type": "研削盤",         "daily_capacity_hours": 8.0,  "setup_time_minutes": 15.0, "is_outsource": False, "sort_order": 5},
+    {"code": "M07", "name": "ワイヤーカット",   "machine_type": "ワイヤーカット",  "daily_capacity_hours": 16.0, "setup_time_minutes": 60.0, "is_outsource": False, "sort_order": 6},
     {"code": "OUT1", "name": "熱処理（外注）",  "machine_type": None, "daily_capacity_hours": 8.0,  "setup_time_minutes": 0.0,
-     "is_outsource": True, "outsource_supplier": "中部熱処理工業", "outsource_lead_days": 3},
+     "is_outsource": True, "outsource_supplier": "中部熱処理工業", "outsource_lead_days": 3, "sort_order": 7},
     {"code": "OUT2", "name": "メッキ（外注）",  "machine_type": None, "daily_capacity_hours": 8.0,  "setup_time_minutes": 0.0,
-     "is_outsource": True, "outsource_supplier": "東洋メッキ工業", "outsource_lead_days": 5},
+     "is_outsource": True, "outsource_supplier": "東洋メッキ工業", "outsource_lead_days": 5, "sort_order": 8},
 ]
 machines = {}
 for m in machines_data:
