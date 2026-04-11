@@ -127,7 +127,7 @@ function GanttBar({
 
 // ── 負荷グラフ ────────────────────────────────────────────────────────────────
 
-function LoadChart({ data, days }: { data: MachineLoad[]; days: number }) {
+function LoadChart({ data }: { data: MachineLoad[]; days?: number }) {
   const WEEKDAYS_SHORT = ['日', '月', '火', '水', '木', '金', '土']
   const machines = data.filter(m => !m.is_outsource)
 
