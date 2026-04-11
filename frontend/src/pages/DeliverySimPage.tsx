@@ -19,7 +19,12 @@ export default function DeliverySimPage() {
   })
 
   const [productName, setProductName] = useState('')
-  const [dueDate, setDueDate] = useState('')
+  // 初期値：今日から30日後
+  const [dueDate, setDueDate] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 30)
+    return d.toISOString().slice(0, 10)
+  })
   const [priority, setPriority] = useState(3)
   const [ops, setOps] = useState<SimOp[]>([{ ...emptyOp }])
 
@@ -41,7 +46,10 @@ export default function DeliverySimPage() {
   const sim = useMutation({
     mutationFn: scheduleApi.simulateDelivery,
     onSuccess: data => { setResult(data.data); setExplanation(null) },
-    onError: () => alert('シミュレーションに失敗しました'),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ? `シミュレーション失敗: ${msg}` : 'シミュレーションに失敗しました。設備を選択してください。')
+    },
   })
 
   const explain = useMutation({
@@ -160,8 +168,9 @@ export default function DeliverySimPage() {
 
           {/* 希望納期 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">希望納期</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">希望納期 *</label>
             <input
+              required
               type="date"
               value={dueDate}
               onChange={e => setDueDate(e.target.value)}

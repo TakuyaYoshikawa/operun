@@ -500,7 +500,9 @@ def check_delivery_date(
     """F-05 納期回答支援（複数工程対応）。"""
     try:
         product_name = payload.get("product_name", "新規")
-        due_date_str = payload["due_date"]
+        due_date_str = payload.get("due_date", "")
+        if not due_date_str:
+            raise HTTPException(status_code=422, detail="due_date は必須です")
         due = date.fromisoformat(due_date_str)
         priority = payload.get("priority", 3)
         is_urgent = payload.get("is_urgent", False)
