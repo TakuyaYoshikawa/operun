@@ -12,6 +12,7 @@ export interface Machine {
   is_active: boolean
   is_outsource: boolean
   outsource_supplier: string | null
+  sort_order: number
   created_at: string
 }
 
@@ -35,11 +36,13 @@ export interface Process {
 export const machinesApi = {
   list: (params?: { is_active?: boolean }) =>
     api.get<Machine[]>('/machines', { params }),
-  create: (data: Omit<Machine, 'id' | 'created_at'>) =>
+  create: (data: Omit<Machine, 'id' | 'created_at' | 'sort_order'>) =>
     api.post<Machine>('/machines', data),
   update: (id: number, data: Partial<Machine>) =>
     api.put<Machine>(`/machines/${id}`, data),
   delete: (id: number) => api.delete(`/machines/${id}`),
+  reorder: (ids: number[]) =>
+    api.post('/machines/reorder', { ids }),
 
   maintenance: {
     list: (machineId: number) =>

@@ -213,6 +213,12 @@ export default function MastersPage() {
   const createM = useMutation({ mutationFn: machinesApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const updateM = useMutation({ mutationFn: ({ id, data }: { id: number; data: Partial<Machine> }) => machinesApi.update(id, data), onSuccess: () => { qc.invalidateQueries({ queryKey: ['machines'] }); resetM() } })
   const deleteM = useMutation({ mutationFn: machinesApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }), onError: (err) => alert(getApiError(err)) })
+  const reorderM = useMutation({
+    mutationFn: (ids: number[]) => machinesApi.reorder(ids),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['machines'] }),
+  })
+  const dragMachineId = useRef<number | null>(null)
+  const [dragOverMachineId, setDragOverMachineId] = useState<number | null>(null)
   const resetM = () => { setMForm({ name: '', code: '', machine_type: '', daily_capacity_hours: 8, setup_time_minutes: 30, batch_capacity: 1, work_start_hour: '', is_active: true, is_outsource: false, outsource_supplier: null }); setMEditId(null) }
   const { data: maintList } = useQuery({
     queryKey: ['maintenance', maintMachineId],
@@ -400,6 +406,7 @@ export default function MastersPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
                 <tr>
+                  <th className="px-2 py-3 w-6"></th>
                   <th className="px-4 py-3 text-left">コード</th>
                   <th className="px-4 py-3 text-left">設備名</th>
                   <th className="px-4 py-3 text-left">グループ</th>
@@ -411,10 +418,30 @@ export default function MastersPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {machines?.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">設備データがありません</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">設備データがありません</td></tr>
                 )}
                 {machines?.map(m => (
-                  <tr key={m.id} className="hover:bg-gray-50">
+                  <tr
+                    key={m.id}
+                    draggable
+                    onDragStart={() => { dragMachineId.current = m.id }}
+                    onDragOver={e => { e.preventDefault(); setDragOverMachineId(m.id) }}
+                    onDragLeave={() => setDragOverMachineId(null)}
+                    onDrop={() => {
+                      setDragOverMachineId(null)
+                      const fromId = dragMachineId.current
+                      if (!fromId || fromId === m.id || !machines) return
+                      const ids = machines.map(x => x.id)
+                      const fromIdx = ids.indexOf(fromId)
+                      const toIdx   = ids.indexOf(m.id)
+                      ids.splice(fromIdx, 1)
+                      ids.splice(toIdx, 0, fromId)
+                      reorderM.mutate(ids)
+                    }}
+                    onDragEnd={() => setDragOverMachineId(null)}
+                    className={`hover:bg-gray-50 ${dragOverMachineId === m.id ? 'bg-blue-50 border-t-2 border-blue-400' : ''}`}
+                  >
+                    <td className="px-2 py-3 text-gray-300 cursor-grab active:cursor-grabbing select-none text-base text-center">≡</td>
                     <td className="px-4 py-3 font-mono text-gray-600">{m.code}</td>
                     <td className="px-4 py-3 font-medium text-gray-800">{m.name}</td>
                     <td className="px-4 py-3 text-gray-500">

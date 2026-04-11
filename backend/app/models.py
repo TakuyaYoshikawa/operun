@@ -83,6 +83,7 @@ class Machine(Base):
     is_outsource = Column(Boolean, default=False)
     outsource_supplier = Column(String, nullable=True)         # 外注先名
     outsource_lead_days = Column(Integer, default=0)           # 標準リードタイム
+    sort_order = Column(Integer, default=0)                    # 表示順
     created_at = Column(DateTime, server_default=func.now())
 
     maintenance_windows = relationship("MachineMaintenance", back_populates="machine",

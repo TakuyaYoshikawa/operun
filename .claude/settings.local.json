@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(python -m venv venv)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun status)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun add backend/app/routers/machines.py backend/app/routers/csv_import.py backend/app/routers/schedule.py backend/app/main.py backend/requirements.txt)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun commit -m ':*)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun add frontend/)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun log --oneline -6)",
+      "Bash(curl -s -X POST http://localhost:8000/api/auth/login -H 'Content-Type: application/x-www-form-urlencoded' -d 'username=demo@example.com&password=demo1234')",
+      "Bash(netstat -ano)",
+      "Bash(curl -s http://localhost:8000/api/orders -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidGVuYW50X2lkIjoxLCJleHAiOjE3NzUwODY5OTd9.2KxIOkBpqnEWuWcDqfusZbI3qpCiINDuWMnZM1imeMA')",
+      "Bash(python -m json.tool)",
+      "Bash(pip freeze:*)",
+      "Bash(git -C /c/Users/takuy/Documents/business/operun add backend/app/models.py backend/app/auth.py backend/app/main.py backend/app/routers/auth_router.py backend/app/routers/machines.py backend/app/routers/orders.py backend/app/routers/schedule.py backend/app/routers/csv_import.py backend/requirements.txt backend/.env.example backend/seed.py)"
+    ]
+  }
+}

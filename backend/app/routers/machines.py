@@ -44,10 +44,15 @@ class MachineUpdate(BaseModel):
 
 class MachineOut(MachineBase):
     id: int
+    sort_order: int = 0
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class MachineReorderPayload(BaseModel):
+    ids: List[int]  # 表示順に並べたmachine IDの配列
 
 
 # ── メンテナンス枠 Pydantic スキーマ ─────────────────────────────────────────────
@@ -106,7 +111,7 @@ def list_machines(
     q = db.query(models.Machine).filter(models.Machine.tenant_id == tenant_id)
     if is_active is not None:
         q = q.filter(models.Machine.is_active == is_active)
-    return q.order_by(models.Machine.code).all()
+    return q.order_by(models.Machine.sort_order, models.Machine.code).all()
 
 
 @router.post("", response_model=MachineOut, status_code=201)
@@ -127,6 +132,21 @@ def create_machine(
     db.commit()
     db.refresh(machine)
     return machine
+
+
+@router.post("/reorder", status_code=204)
+def reorder_machines(
+    payload: MachineReorderPayload,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """設備の表示順を一括更新。ids は新しい順序のmachine IDリスト。"""
+    for i, machine_id in enumerate(payload.ids):
+        db.query(models.Machine).filter(
+            models.Machine.id == machine_id,
+            models.Machine.tenant_id == tenant_id,
+        ).update({"sort_order": i})
+    db.commit()
 
 
 @router.get("/{machine_id}", response_model=MachineOut)

@@ -604,6 +604,12 @@ export default function GanttPage() {
     queryFn: () => settingsApi.get().then(r => r.data),
   })
 
+  // 設備マスターの表示順を取得（ガントの行並び順に使用）
+  const { data: machinesMaster } = useQuery({
+    queryKey: ['machines'],
+    queryFn: () => machinesApi.list().then(r => r.data),
+  })
+
   const { data: loadData } = useQuery({
     queryKey: ['load-chart', viewDraft],
     queryFn: () => scheduleApi.getLoadChart(21, viewDraft).then(r => r.data),
@@ -893,7 +899,14 @@ export default function GanttPage() {
   const hourWidth  = 30  // 時間モード: 1時間あたりのpx
   const dayWidth   = viewMode === 'hour' ? hourWidth * WORK_HOURS : 80
   const rowHeight  = 48
-  const machines   = [...new Set(tasks.map(t => t.resource))]
+  // マスターの sort_order に従って設備を並び替え
+  const machinesInTasks = [...new Set(tasks.map(t => t.resource))]
+  const masterOrder = machinesMaster?.map(m => m.name) ?? []
+  const machines = [
+    ...machinesInTasks.filter(name => masterOrder.includes(name))
+      .sort((a, b) => masterOrder.indexOf(a) - masterOrder.indexOf(b)),
+    ...machinesInTasks.filter(name => !masterOrder.includes(name)),
+  ]
 
   // 設備名 → machine_type / machine_id のマップ（DnD同一グループ判定に使用）
   const machineTypeMap = new Map(tasks.map(t => [t.resource, t.machine_type]))
