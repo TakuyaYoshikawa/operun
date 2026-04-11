@@ -890,7 +890,7 @@ export default function GanttPage() {
 
   const WORK_START = tenantSettings?.work_start_hour ?? 8
   const WORK_HOURS = tenantSettings?.work_hours_per_day ?? 8
-  const hourWidth  = 60  // 時間モード: 1時間あたりのpx
+  const hourWidth  = 30  // 時間モード: 1時間あたりのpx
   const dayWidth   = viewMode === 'hour' ? hourWidth * WORK_HOURS : 80
   const rowHeight  = 48
   const machines   = [...new Set(tasks.map(t => t.resource))]
