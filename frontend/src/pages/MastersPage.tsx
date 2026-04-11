@@ -9,6 +9,8 @@ import type { CalendarHoliday } from '../api/calendar'
 import { productTemplatesApi } from '../api/productTemplates'
 import type { ProductTemplate, TemplateOperationIn } from '../api/productTemplates'
 import { settingsApi } from '../api/settings'
+import { aiApi } from '../api/ai'
+import type { ChatMessage as AiChatMessage } from '../api/ai'
 // ── 設備グループ オートコンプリート ───────────────────────────────────────────
 
 function MachineTypeInput({ value, onChange, existingTypes }: {
@@ -71,9 +73,129 @@ function getApiError(err: unknown): string {
   return '削除に失敗しました'
 }
 
+// ── AIアシスタントパネル ──────────────────────────────────────────────────────
+
+const TAB_CONTEXT: Record<Tab, string> = {
+  machines:  '設備マスタ（create_machine ツールで登録できます。設備名・コード・タイプ・段取り時間などを指定してください）',
+  processes: '工程マスタ（create_process ツールで登録できます。工程名・コード・標準時間・対象設備タイプを指定してください）',
+  customers: '顧客マスタ（create_customer ツールで登録できます。会社名・コード・担当者名・電話・メールを指定してください）',
+  calendar:  'カレンダー例外日（add_calendar_exception ツールで登録できます。日付・稼働時間・名前を指定してください）',
+  templates: '品番テンプレート（現在AIから直接登録できません。手動フォームをご利用ください）',
+  settings:  '稼働設定',
+}
+
+type AgentMsg = { role: 'user' | 'assistant'; content: string; tool_calls?: { tool: string; input: Record<string, unknown>; result: unknown }[] }
+
+function AiPanel({ tab, onClose }: { tab: Tab; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [messages, setMessages] = useState<AgentMsg[]>([
+    { role: 'assistant', content: `マスタ登録AIアシスタントです。現在「${TAB_CONTEXT[tab].split('（')[0]}」タブが選択されています。\n\n登録したい内容を自然言語で教えてください。\n例：「旋盤2号機を追加して。コードはLAT-002、グループは旋盤、段取り30分」` },
+  ])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const send = async () => {
+    if (!input.trim() || loading) return
+    const userMsg: AgentMsg = { role: 'user', content: input }
+    const nextMsgs = [...messages, userMsg]
+    setMessages(nextMsgs)
+    setInput('')
+    setLoading(true)
+
+    try {
+      const apiMsgs: AiChatMessage[] = nextMsgs
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => ({ role: m.role, content: m.content }))
+      const res = await aiApi.agent(apiMsgs)
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: res.data.reply,
+        tool_calls: res.data.tool_calls,
+      }])
+      // マスタ系クエリを再取得
+      qc.invalidateQueries({ queryKey: ['machines'] })
+      qc.invalidateQueries({ queryKey: ['processes'] })
+      qc.invalidateQueries({ queryKey: ['customers'] })
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'エラーが発生しました。再試行してください。' }])
+    } finally {
+      setLoading(false)
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+    }
+  }
+
+  return (
+    <div className="mb-5 border border-blue-200 rounded-xl bg-blue-50 overflow-hidden shadow-sm">
+      {/* パネルヘッダー */}
+      <div className="flex items-center justify-between px-4 py-2.5 bg-blue-600 text-white">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <span>🤖</span>
+          <span>AIアシスタントで登録</span>
+          <span className="text-blue-200 text-xs font-normal">— {TAB_CONTEXT[tab].split('（')[0]}</span>
+        </div>
+        <button onClick={onClose} className="text-blue-200 hover:text-white text-lg leading-none">×</button>
+      </div>
+
+      {/* メッセージ */}
+      <div className="h-56 overflow-y-auto p-3 space-y-2">
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+              m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-800'
+            }`}>
+              <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.tool_calls && m.tool_calls.length > 0 && (
+                <div className="mt-1.5 space-y-1">
+                  {m.tool_calls.map((tc, j) => (
+                    <div key={j} className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-gray-600">
+                      <span className="font-medium text-blue-600">{tc.tool}</span>
+                      {tc.result && typeof tc.result === 'object' && 'message' in tc.result && (
+                        <span className="ml-2 text-green-600">{String((tc.result as Record<string, unknown>).message)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start">
+            <div className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-400">考え中...</div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* 入力 */}
+      <div className="flex gap-2 px-3 pb-3">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
+          placeholder="例：旋盤2号機を追加して。コードはLAT-002..."
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+          disabled={loading}
+        />
+        <button
+          onClick={send}
+          disabled={loading || !input.trim()}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        >
+          送信
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── メインページ ──────────────────────────────────────────────────────────────
+
 export default function MastersPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('machines')
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
 
   // ── 設備 ──────────────────────────────────────────────────────────────────
   const { data: machines } = useQuery({
@@ -167,10 +289,26 @@ export default function MastersPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">マスタ管理</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">マスタ管理</h1>
+        <button
+          onClick={() => setAiPanelOpen(v => !v)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            aiPanelOpen
+              ? 'bg-blue-600 text-white'
+              : 'border border-blue-300 text-blue-700 hover:bg-blue-50'
+          }`}
+        >
+          <span>🤖</span>
+          <span>AIアシスタントで登録</span>
+        </button>
+      </div>
+
+      {/* AIパネル */}
+      {aiPanelOpen && <AiPanel tab={tab} onClose={() => setAiPanelOpen(false)} />}
 
       {/* タブ */}
-      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit">
+      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit flex-wrap">
         {TABS.map(t => (
           <button
             key={t.id}
