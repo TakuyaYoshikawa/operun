@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { scheduleApi } from '../api/schedule'
 import { machinesApi } from '../api/machines'
@@ -85,7 +85,7 @@ function Tooltip({ state }: { state: TooltipState }) {
 // ── ガントバー ────────────────────────────────────────────────────────────────
 
 function GanttBar({
-  task, dayWidth, startDay, onHover, onLeave, onClick, draftMode,
+  task, dayWidth, startDay, onHover, onLeave, onClick, onMouseDown, draftMode, isDragging,
 }: {
   task: GanttTask
   dayWidth: number
@@ -93,7 +93,9 @@ function GanttBar({
   onHover: (task: GanttTask, x: number, y: number) => void
   onLeave: () => void
   onClick?: (task: GanttTask) => void
+  onMouseDown?: (task: GanttTask, e: React.MouseEvent) => void
   draftMode?: boolean
+  isDragging?: boolean
 }) {
   const start = new Date(task.start_date)
   const end   = new Date(task.end_date)
@@ -105,26 +107,29 @@ function GanttBar({
   const color   = getOrderColor(task.order_id)
   const productName = task.text.includes(' / ') ? task.text.split(' / ')[1] : task.text
   const isDone  = task.op_status === 'done'
+  const draggable = !task.is_locked && !isDone
 
   return (
     <div
-      onMouseMove={e => onHover(task, e.clientX, e.clientY)}
+      onMouseMove={e => { if (!isDragging) onHover(task, e.clientX, e.clientY) }}
       onMouseLeave={onLeave}
       onClick={() => onClick?.(task)}
+      onMouseDown={draggable ? e => onMouseDown?.(task, e) : undefined}
       style={{
         left,
         width,
         backgroundColor: color,
-        opacity: isDone ? 0.5 : 1,
+        opacity: isDone ? 0.5 : isDragging ? 0.3 : 1,
         outline: task.is_delayed ? '2px solid #ef4444' : (draftMode ? '1.5px dashed rgba(255,255,255,0.6)' : undefined),
         outlineOffset: task.is_delayed ? '-1px' : undefined,
+        cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
       }}
-      className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer hover:brightness-90 transition-all select-none"
+      className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden transition-opacity select-none"
     >
       {isDone && <span className="mr-1">✓</span>}
       {task.is_locked && !isDone && <span className="mr-1 opacity-80">🔒</span>}
       {task.is_urgent && !isDone && <span className="mr-1 text-yellow-200 font-bold">!</span>}
-      {draftMode && <span className="mr-1 opacity-70">✎</span>}
+      {draftMode && !isDragging && <span className="mr-1 opacity-70">✎</span>}
       <span className="truncate">{productName}</span>
     </div>
   )
@@ -517,6 +522,19 @@ export default function GanttPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [tabMode, setTabMode] = useState<TabMode>('gantt')
 
+  // ── DnD ─────────────────────────────────────────────────────────────────────
+  type GhostState = {
+    left: number; top: number; width: number
+    targetMachine: string; isValid: boolean; task: GanttTask
+  }
+  const scrollRef   = useRef<HTMLDivElement>(null)
+  const dragRef     = useRef<{ task: GanttTask; barOffsetX: number; durationPx: number; startX: number; startY: number } | null>(null)
+  const ghostRef    = useRef<GhostState | null>(null)
+  const didDragRef  = useRef(false)
+  const [ghost, setGhost] = useState<GhostState | null>(null)
+  // sync ghostRef with state so event handlers can read latest value without stale closures
+  ghostRef.current = ghost
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['gantt'] })
     qc.invalidateQueries({ queryKey: ['gantt-draft'] })
@@ -574,7 +592,149 @@ export default function GanttPage() {
     enabled: tabMode === 'load',
   })
 
+  // ── DnD: document-level mouse handlers ──────────────────────────────────────
+  // 現在のレンダリング値をrefで保持（closureのstale問題を回避）
+  const gsRef = useRef({
+    machines: [] as string[],
+    machineTypeMap: new Map<string, string | null>(),
+    machineIdMap: new Map<string, number>(),
+    viewMode: 'day' as ViewMode,
+    dayWidth: 80,
+    minDate: new Date(),
+    days: [] as Date[],
+    WORK_START: 8,
+    WORK_HOURS: 8,
+    hourWidth: 60,
+    rowHeight: 48,
+    hasDraft: false,
+  })
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const dr = dragRef.current
+      if (!dr || !scrollRef.current) return
+
+      const moved = Math.hypot(e.clientX - dr.startX, e.clientY - dr.startY)
+      if (moved < 5) return
+
+      didDragRef.current = true
+      const sr = scrollRef.current
+      const srRect = sr.getBoundingClientRect()
+      const gs = gsRef.current
+
+      const ghostLeft = Math.max(0, e.clientX - srRect.left + sr.scrollLeft - dr.barOffsetX)
+
+      // どの行にいるか（ヘッダー高さを除く）
+      const headerH = gs.viewMode === 'hour' ? 44 : 40
+      const relY = e.clientY - srRect.top - headerH
+      const rowIdx = Math.max(0, Math.min(gs.machines.length - 1, Math.floor(relY / gs.rowHeight)))
+      const targetMachine = gs.machines[rowIdx] ?? dr.task.resource
+
+      // 同じ設備グループかチェック
+      const srcType = gs.machineTypeMap.get(dr.task.resource) ?? null
+      const tgtType = gs.machineTypeMap.get(targetMachine) ?? null
+      const isValid = srcType === null
+        ? targetMachine === dr.task.resource          // タイプなし → 同じ設備のみ
+        : srcType === tgtType                         // タイプあり → 同じグループ
+
+      const top = headerH + rowIdx * gs.rowHeight
+
+      const newGhost = { left: ghostLeft, top, width: dr.durationPx, targetMachine, isValid, task: dr.task }
+      ghostRef.current = newGhost
+      setGhost(newGhost)
+    }
+
+    const onMouseUp = async () => {
+      const dr = dragRef.current
+      const g  = ghostRef.current
+      dragRef.current = null
+      setGhost(null)
+
+      if (!dr || !g || !didDragRef.current) return
+      if (!g.isValid) return
+
+      const gs = gsRef.current
+
+      // ピクセル → 日時変換
+      const pixelToDate = (px: number): Date => {
+        if (gs.viewMode === 'day') {
+          const ms = gs.minDate.getTime() + (px / gs.dayWidth) * 86400000
+          return new Date(Math.round(ms / (30 * 60000)) * (30 * 60000))  // 30分単位
+        } else {
+          const dayIdx = Math.min(gs.days.length - 1, Math.max(0, Math.floor(px / gs.dayWidth)))
+          const hourOff = (px % gs.dayWidth) / gs.hourWidth
+          const d = new Date(gs.days[dayIdx])
+          const totalH = gs.WORK_START + hourOff
+          const h = Math.floor(totalH)
+          const m = Math.round((totalH - h) * 2) * 30  // 30分単位
+          d.setHours(h, m >= 60 ? 0 : m, 0, 0)
+          if (m >= 60) d.setHours(h + 1, 0, 0, 0)
+          return d
+        }
+      }
+
+      const newStart = pixelToDate(g.left)
+      const durMs    = new Date(dr.task.end_date).getTime() - new Date(dr.task.start_date).getTime()
+      const newEnd   = new Date(newStart.getTime() + durMs)
+      const newMachineId = gs.machineIdMap.get(g.targetMachine) ?? dr.task.machine_id
+
+      const fmt = (d: Date) => {
+        const p = (n: number) => n.toString().padStart(2, '0')
+        return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+      }
+
+      const opId = parseInt(dr.task.id.replace('op-', ''), 10)
+      const payload = { draft_start: fmt(newStart), draft_end: fmt(newEnd), draft_machine_id: newMachineId }
+
+      // 下書きがなければ自動作成してから適用
+      if (!gs.hasDraft) {
+        await createDraftMut.mutateAsync()
+        setViewDraft(true)
+      }
+      updateDraftMut.mutate({ opId, payload })
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])  // マウント時1回のみ登録
+
+  const handleBarMouseDown = (task: GanttTask, e: React.MouseEvent) => {
+    if (task.is_locked || task.op_status === 'done') return
+    e.preventDefault()
+    e.stopPropagation()
+    didDragRef.current = false
+
+    const barEl  = e.currentTarget as HTMLElement
+    const barRect = barEl.getBoundingClientRect()
+    const barOffsetX = e.clientX - barRect.left
+
+    const gs = gsRef.current
+    const startD = new Date(task.start_date)
+    const endD   = new Date(task.end_date)
+    let durationPx: number
+    if (gs.viewMode === 'day') {
+      durationPx = ((endD.getTime() - startD.getTime()) / 86400000) * gs.dayWidth
+    } else {
+      // hour mode: toWorkingX は render 時に定義される → gsRef に入れる
+      const toWX = (dt: Date) => {
+        const dayIdx = Math.floor((new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime()
+          - new Date(gs.minDate.getFullYear(), gs.minDate.getMonth(), gs.minDate.getDate()).getTime()) / 86400000)
+        const h = dt.getHours() + dt.getMinutes() / 60
+        const clampedH = Math.max(gs.WORK_START, Math.min(gs.WORK_START + gs.WORK_HOURS, h))
+        return dayIdx * gs.dayWidth + (clampedH - gs.WORK_START) * gs.hourWidth
+      }
+      durationPx = Math.max(toWX(endD) - toWX(startD), 4)
+    }
+
+    dragRef.current = { task, barOffsetX, durationPx, startX: e.clientX, startY: e.clientY }
+  }
+
   const handleBarClick = (task: GanttTask) => {
+    if (didDragRef.current) return   // ドラッグ後はクリック扱いしない
     if (viewDraft) {
       setEditTask(task)
     } else {
@@ -631,6 +791,18 @@ export default function GanttPage() {
   const dayWidth   = viewMode === 'hour' ? hourWidth * WORK_HOURS : 80
   const rowHeight  = 48
   const machines   = [...new Set(tasks.map(t => t.resource))]
+
+  // 設備名 → machine_type / machine_id のマップ（DnD同一グループ判定に使用）
+  const machineTypeMap = new Map(tasks.map(t => [t.resource, t.machine_type]))
+  const machineIdMap   = new Map(tasks.map(t => [t.resource, t.machine_id]))
+
+  // DnDハンドラが参照する最新値をrefに同期
+  gsRef.current = {
+    machines, machineTypeMap, machineIdMap,
+    viewMode, dayWidth, minDate, days,
+    WORK_START, WORK_HOURS, hourWidth, rowHeight,
+    hasDraft,
+  }
 
   // 時間モード: 稼働時間内のオフセット計算
   const toWorkingX = (dt: Date): number => {
@@ -722,7 +894,7 @@ export default function GanttPage() {
       {viewDraft && hasDraft && (
         <div className={`mb-4 border rounded-xl px-4 py-3 flex items-center justify-between gap-4 ${DRAFT_BANNER_CLASS}`}>
           <div className="text-sm font-medium">
-            ✏️ 下書き編集中。バーをクリックして日時・設備を変更できます。確認後「確定」で反映してください。
+            ✏️ 下書き編集中。バーをドラッグして移動、クリックして詳細編集できます。確認後「確定」で反映してください。
           </div>
           <div className="flex gap-2 flex-shrink-0">
             <button
@@ -803,7 +975,7 @@ export default function GanttPage() {
           </div>
 
           {/* スクロール可能なガントエリア */}
-          <div className="overflow-x-auto flex-1">
+          <div ref={scrollRef} className="overflow-x-auto flex-1" style={{ cursor: ghost ? (ghost.isValid ? 'grabbing' : 'not-allowed') : undefined }}>
             {viewMode === 'day' ? (
               <>
                 {/* 日単位ヘッダー */}
@@ -823,19 +995,48 @@ export default function GanttPage() {
                   ))}
                 </div>
                 {/* 各設備行（日モード） */}
-                {machines.map(machineName => (
-                  <div key={machineName} style={{ height: rowHeight, width: days.length * dayWidth }} className="relative border-b border-gray-100">
-                    {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && (
-                      <div key={i} style={{ left: i * dayWidth, width: dayWidth }}
-                        className={`absolute top-0 bottom-0 opacity-30 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
-                    ))}
-                    {tasks.filter(t => t.resource === machineName).map(t => (
-                      <GanttBar key={t.id} task={t} dayWidth={dayWidth} startDay={minDate}
-                        onHover={(task, x, y) => setTooltip({ task, x, y })} onLeave={() => setTooltip(null)}
-                        onClick={handleBarClick} draftMode={viewDraft} />
-                    ))}
-                  </div>
-                ))}
+                {machines.map(machineName => {
+                  const isTargetRow = ghost?.targetMachine === machineName
+                  const rowBg = isTargetRow
+                    ? ghost!.isValid ? 'bg-green-50' : 'bg-red-50'
+                    : ''
+                  return (
+                    <div key={machineName} style={{ height: rowHeight, width: days.length * dayWidth }}
+                      className={`relative border-b border-gray-100 transition-colors ${rowBg}`}
+                    >
+                      {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && (
+                        <div key={i} style={{ left: i * dayWidth, width: dayWidth }}
+                          className={`absolute top-0 bottom-0 opacity-30 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
+                      ))}
+                      {tasks.filter(t => t.resource === machineName).map(t => (
+                        <GanttBar key={t.id} task={t} dayWidth={dayWidth} startDay={minDate}
+                          onHover={(task, x, y) => setTooltip({ task, x, y })} onLeave={() => setTooltip(null)}
+                          onClick={handleBarClick} onMouseDown={handleBarMouseDown}
+                          draftMode={viewDraft}
+                          isDragging={ghost?.task.id === t.id} />
+                      ))}
+                      {/* ゴーストバー（ドラッグ中） */}
+                      {ghost && ghost.targetMachine === machineName && (
+                        <div
+                          className="absolute top-1.5 h-7 rounded pointer-events-none transition-none"
+                          style={{
+                            left: ghost.left,
+                            width: ghost.width,
+                            backgroundColor: getOrderColor(ghost.task.order_id),
+                            opacity: ghost.isValid ? 0.7 : 0.3,
+                            outline: ghost.isValid ? '2px solid rgba(255,255,255,0.8)' : '2px solid #ef4444',
+                          }}
+                        />
+                      )}
+                      {/* ドロップ不可バッジ */}
+                      {ghost && ghost.targetMachine === machineName && !ghost.isValid && (
+                        <div className="absolute top-1 right-2 text-xs text-red-500 font-medium pointer-events-none">
+                          ✕ 別グループ
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </>
             ) : (
               <>
@@ -872,9 +1073,15 @@ export default function GanttPage() {
                 {/* 各設備行（時間モード） */}
                 {machines.map(machineName => {
                   const totalW = days.length * dayWidth
-                  const hours = Array.from({ length: WORK_HOURS }, (_, i) => WORK_START + i)
+                  const hours  = Array.from({ length: WORK_HOURS }, (_, i) => WORK_START + i)
+                  const isTargetRow = ghost?.targetMachine === machineName
+                  const rowBg = isTargetRow
+                    ? ghost!.isValid ? 'bg-green-50' : 'bg-red-50'
+                    : ''
                   return (
-                    <div key={machineName} style={{ height: rowHeight, width: totalW }} className="relative border-b border-gray-100">
+                    <div key={machineName} style={{ height: rowHeight, width: totalW }}
+                      className={`relative border-b border-gray-100 transition-colors ${rowBg}`}
+                    >
                       {/* 時間グリッド */}
                       {days.map((d, di) => (
                         <div key={d.toISOString()}>
@@ -890,27 +1097,46 @@ export default function GanttPage() {
                       ))}
                       {/* バー（時間モード：toWorkingX で位置計算） */}
                       {tasks.filter(t => t.resource === machineName).map(t => {
-                        const s = new Date(t.start_date)
-                        const e = new Date(t.end_date)
+                        const s     = new Date(t.start_date)
+                        const eDate = new Date(t.end_date)
                         const left  = toWorkingX(s)
-                        const width = Math.max(toWorkingX(e) - left, 4)
+                        const width = Math.max(toWorkingX(eDate) - left, 4)
                         const color = getOrderColor(t.order_id)
                         const productName = t.text.includes(' / ') ? t.text.split(' / ')[1] : t.text
+                        const isDone = t.op_status === 'done'
+                        const draggable = !t.is_locked && !isDone
+                        const isDragging = ghost?.task.id === t.id
                         return (
                           <div key={t.id}
-                            onMouseMove={ev => setTooltip({ task: t, x: ev.clientX, y: ev.clientY })}
+                            onMouseMove={ev => { if (!ghost) setTooltip({ task: t, x: ev.clientX, y: ev.clientY }) }}
                             onMouseLeave={() => setTooltip(null)}
                             onClick={() => handleBarClick(t)}
+                            onMouseDown={draggable ? e => handleBarMouseDown(t, e) : undefined}
                             style={{ left, width, backgroundColor: color,
+                              opacity: isDone ? 0.5 : isDragging ? 0.3 : 1,
+                              cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
                               outline: t.is_delayed ? '2px solid #ef4444' : (viewDraft ? '1.5px dashed rgba(255,255,255,0.6)' : undefined),
                               outlineOffset: t.is_delayed ? '-1px' : undefined }}
-                            className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer hover:brightness-90 transition-all select-none">
-                            {t.is_urgent && <span className="mr-1 text-yellow-200 font-bold">!</span>}
-                            {viewDraft && <span className="mr-1 opacity-70">✎</span>}
+                            className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden select-none">
+                            {isDone && <span className="mr-1">✓</span>}
+                            {t.is_locked && !isDone && <span className="mr-1 opacity-80">🔒</span>}
+                            {t.is_urgent && !isDone && <span className="mr-1 text-yellow-200 font-bold">!</span>}
+                            {viewDraft && !isDragging && <span className="mr-1 opacity-70">✎</span>}
                             <span className="truncate">{productName}</span>
                           </div>
                         )
                       })}
+                      {/* ゴーストバー */}
+                      {ghost && ghost.targetMachine === machineName && (
+                        <div className="absolute top-1.5 h-7 rounded pointer-events-none"
+                          style={{
+                            left: ghost.left, width: ghost.width,
+                            backgroundColor: getOrderColor(ghost.task.order_id),
+                            opacity: ghost.isValid ? 0.7 : 0.3,
+                            outline: ghost.isValid ? '2px solid rgba(255,255,255,0.8)' : '2px solid #ef4444',
+                          }}
+                        />
+                      )}
                     </div>
                   )
                 })}

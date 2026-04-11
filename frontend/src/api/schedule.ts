@@ -15,6 +15,7 @@ export interface GanttTask {
   is_locked: boolean
   op_status: 'not_started' | 'in_progress' | 'done' | 'on_hold'
   sequence: number
+  machine_type: string | null
   color: string
 }
 
