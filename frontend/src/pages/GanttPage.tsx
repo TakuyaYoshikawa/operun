@@ -540,14 +540,15 @@ export default function GanttPage() {
     barLeft: number      // bar left edge in scroll-content coordinates (px)
     durationPx: number   // initial bar duration width in px
     startX: number; startY: number
-    // updated live during drag (no React state, mutated directly):
+    srRectLeft: number   // scrollRef.getBoundingClientRect().left — cached at drag start
+    srRectTop: number    // scrollRef.getBoundingClientRect().top  — cached at drag start
+    // updated live during drag (mutated directly, no React re-render):
     ghostLeft: number; ghostWidth: number
     targetMachine: string; isValid: boolean
   }
   const scrollRef   = useRef<HTMLDivElement>(null)
   const dragRef     = useRef<DragState | null>(null)
   const ghostElRef  = useRef<HTMLDivElement | null>(null)
-  const rafRef      = useRef<number>(0)
   const didDragRef  = useRef(false)
   // Only used for row highlight (fires when target row changes, not every frame)
   const [dragTarget, setDragTarget] = useState<{ machine: string; isValid: boolean; taskId: string } | null>(null)
@@ -636,14 +637,15 @@ export default function GanttPage() {
       if (moved < 5) return
       didDragRef.current = true
 
-      const sr = scrollRef.current
-      const srRect = sr.getBoundingClientRect()
-      const gs = gsRef.current
+      const sr  = scrollRef.current
+      const gs  = gsRef.current
+      const el  = ghostElRef.current
       const headerH = gs.viewMode === 'hour' ? 44 : 40
 
+      // srRectLeft/Top はドラッグ開始時にキャッシュ済み → getBoundingClientRect() 呼ばない
       if (dr.mode === 'move') {
-        const ghostLeft = Math.max(0, e.clientX - srRect.left + sr.scrollLeft - dr.barOffsetX)
-        const relY = e.clientY - srRect.top - headerH
+        const ghostLeft = Math.max(0, e.clientX - dr.srRectLeft + sr.scrollLeft - dr.barOffsetX)
+        const relY = e.clientY - dr.srRectTop - headerH
         const rowIdx = Math.max(0, Math.min(gs.machines.length - 1, Math.floor(relY / gs.rowHeight)))
         const targetMachine = gs.machines[rowIdx] ?? dr.task.resource
 
@@ -655,31 +657,25 @@ export default function GanttPage() {
 
         const ghostTop = headerH + rowIdx * gs.rowHeight + 6  // +6 ≈ top-1.5
 
-        // Mutate drag state directly (no React re-render)
         dr.ghostLeft = ghostLeft
         dr.targetMachine = targetMachine
         dr.isValid = isValid
 
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = requestAnimationFrame(() => {
-          const el = ghostElRef.current
-          if (!el) return
-          el.style.display = 'block'
-          el.style.left = `${ghostLeft}px`
-          el.style.top = `${ghostTop}px`
-          el.style.width = `${dr.durationPx}px`
-          el.style.backgroundColor = getOrderColor(dr.task.order_id)
-          el.style.opacity = isValid ? '0.7' : '0.3'
-          el.style.outline = isValid ? '2px solid rgba(255,255,255,0.8)' : '2px solid #ef4444'
-        })
+        // transform: translate3d → GPU合成レイヤー、Layoutをスキップ
+        // RAF なし → mousemove で直接書き込み（ブラウザが自動バッチ、1フレーム遅延なし）
+        el.style.display = 'block'
+        el.style.transform = `translate3d(${ghostLeft}px, ${ghostTop}px, 0)`
+        el.style.width = `${dr.durationPx}px`
+        el.style.opacity = isValid ? '0.7' : '0.3'
+        el.style.outline = isValid ? '2px solid rgba(255,255,255,0.8)' : '2px solid #ef4444'
 
-        // React state only when row/validity changes (1 re-render per row-change, not per frame)
+        // React state: ターゲット行が変わったときのみ更新（行ハイライト用）
         setDragTarget(prev => {
           if (prev?.machine === targetMachine && prev?.isValid === isValid) return prev
           return { machine: targetMachine, isValid, taskId: dr.task.id }
         })
       } else {
-        // resize mode: only right edge moves
+        // resize mode: 右端のみ移動
         const deltaX = e.clientX - dr.startX
         const minW = gs.viewMode === 'hour' ? gs.hourWidth * 0.5 : gs.dayWidth * 0.1
         const newWidth = Math.max(minW, dr.durationPx + deltaX)
@@ -688,26 +684,21 @@ export default function GanttPage() {
 
         dr.ghostWidth = newWidth
 
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = requestAnimationFrame(() => {
-          const el = ghostElRef.current
-          if (!el) return
-          el.style.display = 'block'
-          el.style.left = `${dr.barLeft}px`
-          el.style.top = `${ghostTop}px`
-          el.style.width = `${newWidth}px`
-          el.style.backgroundColor = getOrderColor(dr.task.order_id)
-          el.style.opacity = '0.75'
-          el.style.outline = '2px solid rgba(255,255,255,0.9)'
-        })
+        el.style.display = 'block'
+        el.style.transform = `translate3d(${dr.barLeft}px, ${ghostTop}px, 0)`
+        el.style.width = `${newWidth}px`
+        el.style.opacity = '0.75'
+        el.style.outline = '2px solid rgba(255,255,255,0.9)'
       }
     }
 
     const onMouseUp = async () => {
       const dr = dragRef.current
       dragRef.current = null
-      cancelAnimationFrame(rafRef.current)
-      if (ghostElRef.current) ghostElRef.current.style.display = 'none'
+      if (ghostElRef.current) {
+        ghostElRef.current.style.display = 'none'
+        ghostElRef.current.style.willChange = 'auto'  // GPUレイヤーを解放
+      }
       setDragTarget(null)
 
       if (!dr || !didDragRef.current) return
@@ -777,6 +768,10 @@ export default function GanttPage() {
     const barRect = barEl.getBoundingClientRect()
     const barOffsetX = e.clientX - barRect.left
 
+    // getBoundingClientRect をここで1回だけ呼んでキャッシュ（mousemove 中は使わない）
+    const sr = scrollRef.current
+    const srRect = sr?.getBoundingClientRect() ?? new DOMRect()
+
     const gs = gsRef.current
     const startD = new Date(task.start_date)
     const endD   = new Date(task.end_date)
@@ -789,9 +784,17 @@ export default function GanttPage() {
       durationPx = Math.max(gs.toWorkingX(endD) - barLeft, 4)
     }
 
+    // ゴーストの初期スタイルをここで設定（色・サイズ固定部分）
+    const el = ghostElRef.current
+    if (el) {
+      el.style.backgroundColor = getOrderColor(task.order_id)
+      el.style.willChange = 'transform'  // GPUレイヤーに昇格
+    }
+
     dragRef.current = {
       mode: 'move', task, barOffsetX, barLeft, durationPx,
       startX: e.clientX, startY: e.clientY,
+      srRectLeft: srRect.left, srRectTop: srRect.top,
       ghostLeft: barLeft, ghostWidth: durationPx,
       targetMachine: task.resource, isValid: true,
     }
@@ -803,6 +806,9 @@ export default function GanttPage() {
     e.stopPropagation()
     didDragRef.current = false
 
+    const sr = scrollRef.current
+    const srRect = sr?.getBoundingClientRect() ?? new DOMRect()
+
     const gs = gsRef.current
     const startD = new Date(task.start_date)
     const endD   = new Date(task.end_date)
@@ -815,9 +821,16 @@ export default function GanttPage() {
       durationPx = Math.max(gs.toWorkingX(endD) - barLeft, 4)
     }
 
+    const el = ghostElRef.current
+    if (el) {
+      el.style.backgroundColor = getOrderColor(task.order_id)
+      el.style.willChange = 'transform'
+    }
+
     dragRef.current = {
       mode: 'resize', task, barOffsetX: 0, barLeft, durationPx,
       startX: e.clientX, startY: e.clientY,
+      srRectLeft: srRect.left, srRectTop: srRect.top,
       ghostLeft: barLeft, ghostWidth: durationPx,
       targetMachine: task.resource, isValid: true,
     }
@@ -1230,11 +1243,11 @@ export default function GanttPage() {
               </>
             )}
 
-            {/* ゴーストバー（DOMで直接操作、React再レンダーなし） */}
+            {/* ゴーストバー: transform で GPU合成、left/top は固定0 */}
             <div
               ref={ghostElRef}
               className="absolute h-7 rounded pointer-events-none z-30"
-              style={{ display: 'none', top: 0, left: 0 }}
+              style={{ display: 'none', top: 0, left: 0, transform: 'translate3d(0,0,0)' }}
             />
           </div>
         </div>
