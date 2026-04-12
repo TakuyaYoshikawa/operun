@@ -231,6 +231,7 @@ const MUTATING_TOOLS = new Set([
   'update_operation_constraint', 'update_machine_capacity',
   'update_tenant_settings', 'update_order', 'create_order',
   'run_schedule', 'receive_stock', 'issue_stock', 'create_purchase_order',
+  'bulk_update_orders',
 ])
 
 const AI_TOOL_LABEL: Record<string, string> = {
@@ -246,6 +247,7 @@ const AI_TOOL_LABEL: Record<string, string> = {
   update_operation_constraint: '工程制約変更',
   update_tenant_settings: '工場設定変更',
   update_order: '受注更新',
+  bulk_update_orders: '受注一括更新',
   create_order: '受注登録',
   run_schedule: 'スケジュール実行',
 }

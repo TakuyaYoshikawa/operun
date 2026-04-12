@@ -321,8 +321,9 @@ def ai_agent(
 
 ## 利用可能な操作
 ### 受注・在庫管理
-- 受注の検索・情報確認（search_orders）
+- 受注の検索・情報確認（search_orders）— customer_idで顧客絞り込み可
 - 受注の納期・優先度・数量・ステータス・備考の変更（update_order）
+- 複数受注の一括変更（bulk_update_orders）— 納期・優先度・ステータスをまとめて変更
 - 新規受注の登録（create_order）
 - 材料在庫の確認・入出庫（search_materials, receive_stock, issue_stock）
 - 発注登録（create_purchase_order）
@@ -347,6 +348,8 @@ def ai_agent(
 3. 変更完了後は変更内容を明示し、スケジュール再実行を提案する
 4. 設備名が不明な場合はまず search_machines で検索する
 5. 受注番号が不明な場合はまず search_orders で検索する
+6. **顧客名で受注を検索する場合**: search_customers で顧客IDを取得 → search_orders に customer_id を指定して受注一覧を取得する
+7. **複数受注を一括変更する場合**: search_ordersで対象受注一覧を取得 → 変更内容をユーザーに提示して確認 → bulk_update_orders で一括更新する
 6. 制約変更後は explain_constraints でサマリーを表示する
 7. 日本語で簡潔に回答する"""
 
@@ -456,12 +459,14 @@ def _build_agent_tools() -> list:
         },
         {
             "name": "search_orders",
-            "description": "受注を検索・一覧取得する。受注番号・品名・ステータスで検索できる。",
+            "description": "受注を検索・一覧取得する。受注番号・品名・ステータス・顧客IDで絞り込める。顧客名で検索したい場合はまずsearch_customersで顧客IDを取得し、そのcustomer_idを指定すること。",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "keyword": {"type": "string", "description": "品名や受注番号のキーワード（省略可）"},
                     "status": {"type": "string", "description": "pending / in_progress / done（省略可）"},
+                    "customer_id": {"type": "integer", "description": "顧客IDで絞り込む（search_customersで取得したIDを指定）"},
+                    "limit": {"type": "integer", "description": "最大取得件数（デフォルト50、上限200）"},
                 },
             },
         },
@@ -506,6 +511,20 @@ def _build_agent_tools() -> list:
                     "note": {"type": "string", "description": "備考"},
                 },
                 "required": ["order_number"],
+            },
+        },
+        {
+            "name": "bulk_update_orders",
+            "description": "複数の受注をまとめて更新する。顧客の受注一括納期変更・優先度一括変更などに使う。order_numbersリストと変更内容を指定する。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "order_numbers": {"type": "array", "items": {"type": "string"}, "description": "更新する受注番号のリスト（search_ordersで取得した受注番号を使う）"},
+                    "due_date": {"type": "string", "description": "新しい納期（YYYY-MM-DD）"},
+                    "priority": {"type": "integer", "description": "優先度：1=特急、2=高、3=通常"},
+                    "status": {"type": "string", "description": "ステータス：pending / in_progress / done"},
+                },
+                "required": ["order_numbers"],
             },
         },
         {
@@ -776,19 +795,37 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
              .order_by(models.Order.due_date))
         if params.get("status"):
             q = q.filter(models.Order.status == params["status"])
+        if params.get("customer_id"):
+            q = q.filter(models.Order.customer_id == params["customer_id"])
         if params.get("keyword"):
             kw = f"%{params['keyword']}%"
             q = q.filter(
                 models.Order.product_name.ilike(kw) |
-                models.Order.order_number.ilike(kw)
+                models.Order.order_number.ilike(kw) |
+                models.Order.product_code.ilike(kw)
             )
-        orders = q.limit(10).all()
+        limit = min(int(params.get("limit", 50)), 200)
+        orders = q.limit(limit).all()
+        # 顧客名マップ
+        customer_ids = [o.customer_id for o in orders if o.customer_id]
+        customer_map: dict = {}
+        if customer_ids:
+            for c in db.query(models.Customer).filter(models.Customer.id.in_(customer_ids)).all():
+                customer_map[c.id] = c.name
         return {
             "count": len(orders),
             "orders": [
-                {"id": o.id, "order_number": o.order_number, "product_name": o.product_name,
-                 "quantity": o.quantity, "due_date": str(o.due_date),
-                 "status": o.status, "priority": o.priority}
+                {
+                    "id": o.id,
+                    "order_number": o.order_number,
+                    "product_name": o.product_name,
+                    "product_code": o.product_code,
+                    "quantity": o.quantity,
+                    "due_date": str(o.due_date),
+                    "status": o.status,
+                    "priority": o.priority,
+                    "customer_name": customer_map.get(o.customer_id, "未設定") if o.customer_id else "未設定",
+                }
                 for o in orders
             ],
         }
@@ -826,6 +863,45 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
         db.commit()
         db.refresh(c)
         return {"success": True, "id": c.id, "code": c.code, "name": c.name}
+
+    if name == "bulk_update_orders":
+        order_numbers = params.get("order_numbers", [])
+        if not order_numbers:
+            return {"error": "order_numbers が指定されていません"}
+
+        orders = db.query(models.Order).filter(
+            models.Order.tenant_id == tenant_id,
+            models.Order.order_number.in_(order_numbers),
+        ).all()
+
+        if not orders:
+            return {"error": f"指定された受注番号が見つかりません: {order_numbers}"}
+
+        not_found = [n for n in order_numbers if n not in {o.order_number for o in orders}]
+        updated = []
+        priority_label = {1: "特急", 2: "高", 3: "通常"}
+
+        for order in orders:
+            changes: dict = {}
+            if "due_date" in params:
+                order.due_date = date.fromisoformat(params["due_date"])
+                changes["due_date"] = params["due_date"]
+            if "priority" in params:
+                order.priority = params["priority"]
+                changes["priority"] = priority_label.get(params["priority"], str(params["priority"]))
+            if "status" in params:
+                order.status = params["status"]
+                changes["status"] = params["status"]
+            updated.append({"order_number": order.order_number, "product_name": order.product_name, "changes": changes})
+
+        db.commit()
+        return {
+            "success": True,
+            "updated_count": len(updated),
+            "not_found": not_found,
+            "updated_orders": updated,
+            "message": f"{len(updated)}件の受注を更新しました" + (f"（{len(not_found)}件は見つかりませんでした）" if not_found else ""),
+        }
 
     if name == "update_order":
         order_number = params.get("order_number")
