@@ -107,8 +107,13 @@ function OpsEditor({ order, onChanged }: { order: Order; onChanged: () => void }
               </span>
               {op.is_urgent && <span className="text-[10px] px-1 py-0.5 bg-red-100 text-red-600 rounded flex-shrink-0">特急</span>}
               {/* アクション */}
-              <button onClick={() => lockMut.mutate(op.id)} disabled={lockMut.isPending} title="ロック切替" className="text-sm flex-shrink-0 opacity-60 hover:opacity-100">
-                🔒
+              <button
+                onClick={() => lockMut.mutate(op.id)}
+                disabled={lockMut.isPending}
+                title={op.schedule_locked ? 'スケジュール固定中（クリックで解除）' : 'スケジュール未固定（クリックで固定）'}
+                className={`text-sm flex-shrink-0 transition-opacity ${op.schedule_locked ? 'opacity-100' : 'opacity-30 hover:opacity-70'}`}
+              >
+                {op.schedule_locked ? '🔒' : '🔓'}
               </button>
               {op.op_status === 'not_started' && (
                 <button onClick={() => startMut.mutate(op.id)} disabled={startMut.isPending} className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded hover:bg-blue-600 disabled:opacity-50 flex-shrink-0">着手</button>

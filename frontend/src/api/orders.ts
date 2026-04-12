@@ -14,6 +14,7 @@ export interface Operation {
   not_before_date: string | null
   planned_start: string | null
   planned_end: string | null
+  schedule_locked: boolean
   op_status: string
   actual_start: string | null
   actual_end: string | null

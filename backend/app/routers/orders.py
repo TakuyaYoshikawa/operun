@@ -25,6 +25,7 @@ class OperationOut(BaseModel):
     not_before_date: Optional[date] = None
     planned_start: Optional[datetime]
     planned_end: Optional[datetime]
+    schedule_locked: bool = False
     op_status: str
     actual_start: Optional[datetime]
     actual_end: Optional[datetime]
