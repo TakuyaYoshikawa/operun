@@ -155,9 +155,9 @@ function GanttBar({
 
 const QUICK_PROMPTS = [
   '現在のスケジュール状況を教えて',
+  '現在の制約設定を確認して',
   'メンテナンスの予定を確認したい',
   '稼働設備の一覧を見せて',
-  'ロック中の工程を解除したい',
 ]
 
 function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void }) {
@@ -168,25 +168,31 @@ function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const MUTATING_TOOLS = new Set([
-    'add_maintenance', 'delete_maintenance', 'update_machine_status',
-    'add_calendar_exception', 'delete_calendar_exception',
-    'toggle_operation_lock', 'update_machine_daily_hours',
-    'update_machine_saturday_off',
+    'add_maintenance_window', 'update_machine_status',
+    'add_calendar_exception',
+    'update_operation_constraint', 'update_machine_capacity',
+    'update_tenant_settings', 'update_order', 'create_order',
+    'run_schedule', 'receive_stock', 'issue_stock', 'create_purchase_order',
   ])
 
   const TOOL_LABEL: Record<string, string> = {
     get_schedule_summary: 'スケジュール確認',
-    get_constraints_summary: '制約確認',
+    explain_constraints: '制約確認',
+    search_orders: '受注検索',
     search_machines: '設備検索',
-    get_machine_detail: '設備詳細取得',
-    add_maintenance: 'メンテナンス追加',
-    delete_maintenance: 'メンテナンス削除',
-    update_machine_status: '設備状態変更',
+    search_materials: '材料検索',
+    add_maintenance_window: 'メンテナンス追加',
+    update_machine_status: '設備稼働状態変更',
+    update_machine_capacity: '設備能力変更',
     add_calendar_exception: 'カレンダー例外追加',
-    delete_calendar_exception: 'カレンダー例外削除',
-    toggle_operation_lock: '工程ロック切替',
-    update_machine_daily_hours: '稼働時間変更',
-    update_machine_saturday_off: '土曜稼働変更',
+    update_operation_constraint: '工程制約変更',
+    update_tenant_settings: '工場設定変更',
+    update_order: '受注更新',
+    create_order: '受注登録',
+    run_schedule: 'スケジュール実行',
+    receive_stock: '材料入庫',
+    issue_stock: '材料払出',
+    create_purchase_order: '発注登録',
   }
 
   const sendMut = useMutation({
