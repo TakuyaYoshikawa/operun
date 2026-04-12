@@ -4,8 +4,10 @@ import { scheduleApi } from '../api/schedule'
 import { machinesApi } from '../api/machines'
 import { settingsApi } from '../api/settings'
 import { aiApi } from '../api/ai'
+import { ordersApi } from '../api/orders'
+import { customersApi } from '../api/customers'
 import { OrderModal } from '../components/OrderModal'
-import type { ChatMessage } from '../api/ai'
+import type { ChatMessage, ParsedOrder } from '../api/ai'
 import type { GanttTask } from '../api/schedule'
 
 const DRAFT_BANNER_CLASS = 'bg-yellow-50 border-yellow-300 text-yellow-800'
@@ -151,49 +153,202 @@ function GanttBar({
   )
 }
 
-// ── AIアシスタント（制約調整チャット） ───────────────────────────────────────
+// ── AIアシスタント ──────────────────────────────────────────────────────────
 
-const QUICK_PROMPTS = [
+const MUTATING_TOOLS = new Set([
+  'add_maintenance_window', 'update_machine_status',
+  'add_calendar_exception',
+  'update_operation_constraint', 'update_machine_capacity',
+  'update_tenant_settings', 'update_order', 'create_order',
+  'run_schedule', 'receive_stock', 'issue_stock', 'create_purchase_order',
+])
+
+const AI_TOOL_LABEL: Record<string, string> = {
+  get_schedule_summary: 'スケジュール確認',
+  explain_constraints: '制約確認',
+  search_orders: '受注検索',
+  search_machines: '設備検索',
+  search_materials: '材料検索',
+  add_maintenance_window: 'メンテナンス追加',
+  update_machine_status: '設備稼働状態変更',
+  update_machine_capacity: '設備能力変更',
+  add_calendar_exception: 'カレンダー例外追加',
+  update_operation_constraint: '工程制約変更',
+  update_tenant_settings: '工場設定変更',
+  update_order: '受注更新',
+  create_order: '受注登録',
+  run_schedule: 'スケジュール実行',
+}
+
+const CONSTRAINT_PROMPTS = [
   '現在のスケジュール状況を教えて',
   '現在の制約設定を確認して',
   'メンテナンスの予定を確認したい',
   '稼働設備の一覧を見せて',
 ]
 
-function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void }) {
+const ORDER_EXAMPLES = [
+  'シャフトA 50個 4/30まで 急ぎ',
+  '歯車B 20個 来月末',
+  'フランジC 10個 今週中 特急',
+]
+
+// ── 受注入力パネル ───────────────────────────────────────────────────────────
+
+function OrderInputPanel() {
+  const qc = useQueryClient()
+  const [input, setInput] = useState('')
+  const [form, setForm] = useState<ParsedOrder | null>(null)
+  const [registered, setRegistered] = useState(false)
+
+  const { data: customers } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => customersApi.list().then(r => r.data),
+  })
+
+  const parseMut = useMutation({
+    mutationFn: (text: string) => aiApi.parseOrder(text),
+    onSuccess: (res) => {
+      if (res.data.type === 'single') setForm(res.data.order)
+    },
+  })
+
+  const createMut = useMutation({
+    mutationFn: (data: Parameters<typeof ordersApi.create>[0]) => ordersApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      setRegistered(true)
+      setForm(null)
+      setInput('')
+    },
+  })
+
+  const handleParse = () => {
+    if (!input.trim() || parseMut.isPending) return
+    setRegistered(false)
+    setForm(null)
+    parseMut.mutate(input.trim())
+  }
+
+  const handleRegister = () => {
+    if (!form?.product_name || !form.quantity || !form.due_date) return
+    createMut.mutate({
+      order_number: `ORD-AI-${Date.now().toString().slice(-6)}`,
+      product_name: form.product_name,
+      product_code: form.product_code ?? '',
+      quantity: Number(form.quantity),
+      due_date: form.due_date,
+      priority: (form.priority as 1 | 2 | 3) ?? 3,
+      note: form.note ?? '',
+      customer_id: form.customer_id ?? null,
+    })
+  }
+
+  return (
+    <div className="p-4 space-y-3">
+      <p className="text-xs text-gray-400">受注情報を自由に入力してください：</p>
+
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleParse() }}
+          placeholder="例：シャフトA 50個 4/30まで 急ぎで"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+        />
+        <button
+          onClick={handleParse}
+          disabled={!input.trim() || parseMut.isPending}
+          className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+        >
+          {parseMut.isPending ? '解析中...' : '解析'}
+        </button>
+      </div>
+
+      <div className="flex gap-1.5 flex-wrap">
+        {ORDER_EXAMPLES.map(ex => (
+          <button key={ex} onClick={() => setInput(ex)}
+            className="text-xs px-2 py-1 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50">
+            {ex}
+          </button>
+        ))}
+      </div>
+
+      {registered && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700 font-medium">
+          受注を登録しました
+        </div>
+      )}
+
+      {form && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 bg-blue-100 border-b border-blue-200 text-xs font-medium text-blue-700">
+            解析結果 — 確認・修正して登録
+          </div>
+          <div className="p-3 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-500">品名 *</label>
+                <input value={form.product_name ?? ''}
+                  onChange={e => setForm(f => f ? { ...f, product_name: e.target.value } : f)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">数量 *</label>
+                <input type="number" value={form.quantity ?? ''}
+                  onChange={e => setForm(f => f ? { ...f, quantity: Number(e.target.value) } : f)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">納期 *</label>
+                <input type="date" value={form.due_date ?? ''}
+                  onChange={e => setForm(f => f ? { ...f, due_date: e.target.value } : f)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">優先度</label>
+                <select value={form.priority}
+                  onChange={e => setForm(f => f ? { ...f, priority: Number(e.target.value) } : f)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5 bg-white">
+                  <option value={3}>通常</option>
+                  <option value={2}>高</option>
+                  <option value={1}>特急</option>
+                </select>
+              </div>
+            </div>
+            {(customers?.items?.length ?? 0) > 0 && (
+              <div>
+                <label className="text-xs text-gray-500">取引先</label>
+                <select value={form.customer_id ?? ''}
+                  onChange={e => setForm(f => f ? { ...f, customer_id: e.target.value ? Number(e.target.value) : null } : f)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5 bg-white">
+                  <option value="">未選択</option>
+                  {customers?.items?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+            <button
+              onClick={handleRegister}
+              disabled={!form.product_name || !form.quantity || !form.due_date || createMut.isPending}
+              className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+            >
+              {createMut.isPending ? '登録中...' : 'この内容で登録する'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 制約設定パネル ───────────────────────────────────────────────────────────
+
+function ConstraintPanel({ onScheduleChanged }: { onScheduleChanged: () => void }) {
   const qc = useQueryClient()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [toolLog, setToolLog] = useState<{ tool: string; label: string }[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const MUTATING_TOOLS = new Set([
-    'add_maintenance_window', 'update_machine_status',
-    'add_calendar_exception',
-    'update_operation_constraint', 'update_machine_capacity',
-    'update_tenant_settings', 'update_order', 'create_order',
-    'run_schedule', 'receive_stock', 'issue_stock', 'create_purchase_order',
-  ])
-
-  const TOOL_LABEL: Record<string, string> = {
-    get_schedule_summary: 'スケジュール確認',
-    explain_constraints: '制約確認',
-    search_orders: '受注検索',
-    search_machines: '設備検索',
-    search_materials: '材料検索',
-    add_maintenance_window: 'メンテナンス追加',
-    update_machine_status: '設備稼働状態変更',
-    update_machine_capacity: '設備能力変更',
-    add_calendar_exception: 'カレンダー例外追加',
-    update_operation_constraint: '工程制約変更',
-    update_tenant_settings: '工場設定変更',
-    update_order: '受注更新',
-    create_order: '受注登録',
-    run_schedule: 'スケジュール実行',
-    receive_stock: '材料入庫',
-    issue_stock: '材料払出',
-    create_purchase_order: '発注登録',
-  }
 
   const sendMut = useMutation({
     mutationFn: (msgs: ChatMessage[]) => aiApi.agent(msgs),
@@ -201,9 +356,8 @@ function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void
       setMessages([...msgs, { role: 'assistant', content: res.data.reply }])
       const calls = res.data.tool_calls ?? []
       if (calls.length > 0) {
-        setToolLog(calls.map(c => ({ tool: c.tool, label: TOOL_LABEL[c.tool] ?? c.tool })))
-        const hasMutation = calls.some(c => MUTATING_TOOLS.has(c.tool))
-        if (hasMutation) {
+        setToolLog(calls.map(c => ({ tool: c.tool, label: AI_TOOL_LABEL[c.tool] ?? c.tool })))
+        if (calls.some(c => MUTATING_TOOLS.has(c.tool))) {
           qc.invalidateQueries({ queryKey: ['machines'] })
           onScheduleChanged()
         }
@@ -228,36 +382,14 @@ function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void
   }
 
   return (
-    <div className="mt-6 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-      {/* ヘッダー */}
-      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🤖</span>
-          <h2 className="text-sm font-semibold text-gray-700">AIスケジュールアシスタント</h2>
-          <span className="text-xs text-gray-400">設備制約・メンテナンス・ロックの調整ができます</span>
-        </div>
-        {messages.length > 0 && (
-          <button
-            onClick={() => { setMessages([]); setToolLog([]) }}
-            className="text-xs text-gray-400 hover:text-gray-600"
-          >
-            会話をリセット
-          </button>
-        )}
-      </div>
-
-      {/* クイックアクション（会話がない時） */}
+    <>
       {messages.length === 0 && (
         <div className="px-4 pt-4 pb-2">
           <p className="text-xs text-gray-400 mb-2">よく使う操作：</p>
           <div className="flex flex-wrap gap-2">
-            {QUICK_PROMPTS.map(p => (
-              <button
-                key={p}
-                onClick={() => handleSend(p)}
-                disabled={sendMut.isPending}
-                className="text-xs px-3 py-1.5 rounded-full border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors disabled:opacity-50"
-              >
+            {CONSTRAINT_PROMPTS.map(p => (
+              <button key={p} onClick={() => handleSend(p)} disabled={sendMut.isPending}
+                className="text-xs px-3 py-1.5 rounded-full border border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors disabled:opacity-50">
                 {p}
               </button>
             ))}
@@ -265,28 +397,21 @@ function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void
         </div>
       )}
 
-      {/* メッセージ一覧 */}
       {messages.length > 0 && (
         <div className="px-4 py-3 space-y-3 max-h-80 overflow-y-auto">
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                  m.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
-                }`}
-              >
+              <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+              }`}>
                 {m.content}
               </div>
             </div>
           ))}
-
-          {/* ツール実行ログ */}
           {sendMut.isPending && toolLog.length === 0 && (
             <div className="flex justify-start">
               <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
-                <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+                <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-orange-500 rounded-full" />
                 考えています...
               </div>
             </div>
@@ -296,46 +421,85 @@ function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void
               <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-xs text-gray-500 space-y-0.5">
                 {toolLog.map((t, i) => (
                   <div key={i} className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
                     {t.label}
                   </div>
                 ))}
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+                  <span className="animate-spin inline-block w-3 h-3 border-2 border-gray-300 border-t-orange-500 rounded-full" />
                   <span className="text-gray-400">応答を生成中...</span>
                 </div>
               </div>
             </div>
           )}
-
           <div ref={messagesEndRef} />
         </div>
       )}
 
-      {/* 入力エリア */}
       <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex gap-2 items-end">
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              handleSend(input)
-            }
-          }}
-          placeholder="例：旋盤Aを来週月火でメンテナンスにして　/ 納期超過中の工程を確認して"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(input) } }}
+          placeholder="例：旋盤Aを来週月火でメンテに　/ ORD-031の第2工程を特急にして"
           rows={2}
           disabled={sendMut.isPending}
-          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
+          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:opacity-50"
         />
         <button
           onClick={() => handleSend(input)}
           disabled={sendMut.isPending || !input.trim()}
-          className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex-shrink-0 h-[72px] flex items-center"
+          className="bg-orange-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-orange-600 disabled:opacity-50 flex-shrink-0 h-[72px] flex items-center"
         >
           送信
         </button>
       </div>
+
+      {messages.length > 0 && (
+        <div className="px-4 pb-2 flex justify-end">
+          <button onClick={() => { setMessages([]); setToolLog([]) }}
+            className="text-xs text-gray-400 hover:text-gray-600">
+            会話をリセット
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── AIアシスタント（タブ統合） ───────────────────────────────────────────────
+
+function GanttAiAssistant({ onScheduleChanged }: { onScheduleChanged: () => void }) {
+  const [tab, setTab] = useState<'order' | 'constraint'>('constraint')
+
+  return (
+    <div className="mt-6 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      {/* タブヘッダー */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setTab('order')}
+          className={`flex-1 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+            tab === 'order'
+              ? 'bg-white text-blue-700 border-b-2 border-blue-600'
+              : 'bg-gray-50 text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span>📝</span> 受注入力
+        </button>
+        <button
+          onClick={() => setTab('constraint')}
+          className={`flex-1 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${
+            tab === 'constraint'
+              ? 'bg-white text-orange-700 border-b-2 border-orange-500'
+              : 'bg-gray-50 text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span>⚙️</span> 制約設定
+        </button>
+      </div>
+
+      {tab === 'order'      && <OrderInputPanel />}
+      {tab === 'constraint' && <ConstraintPanel onScheduleChanged={onScheduleChanged} />}
     </div>
   )
 }

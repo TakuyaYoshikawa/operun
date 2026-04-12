@@ -25,7 +25,6 @@ const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'work',     label: '工程実績',           icon: '🔧' },
   { id: 'orders',   label: '受注管理',           icon: '📋' },
   { id: 'delivery', label: '納期シミュレーター', icon: '🔍' },
-  { id: 'ai',       label: 'AIアシスタント',     icon: '🤖' },
 ]
 
 // プロ版機能（未実装・クリック不可）
@@ -41,7 +40,7 @@ const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
 ]
 
 // モバイル下部ナビに表示する項目
-const BOTTOM_NAV: Page[] = ['gantt', 'orders', 'delivery', 'ai']
+const BOTTOM_NAV: Page[] = ['gantt', 'orders', 'delivery', 'work']
 
 function PageContent({ page }: { page: Page }) {
   return (
