@@ -153,6 +153,76 @@ function GanttBar({
   )
 }
 
+// ── マークダウン簡易レンダラー ────────────────────────────────────────────────
+
+function MarkdownMessage({ content }: { content: string }) {
+  const lines = content.split('\n')
+  const blocks: React.ReactNode[] = []
+  let i = 0
+
+  while (i < lines.length) {
+    // テーブル検出：| で始まる行が続く場合
+    if (lines[i].trim().startsWith('|')) {
+      const tableLines: string[] = []
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i])
+        i++
+      }
+      // セパレータ行（|---|---|）を除外してヘッダー・ボディに分割
+      const nonSep = tableLines.filter(l => !/^\s*\|[\s\-:|]+\|\s*$/.test(l))
+      const parseRow = (line: string) =>
+        line.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
+
+      if (nonSep.length > 0) {
+        const [headerRow, ...bodyRows] = nonSep
+        blocks.push(
+          <div key={blocks.length} className="overflow-x-auto my-2">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-200">
+                  {parseRow(headerRow).map((cell, ci) => (
+                    <th key={ci} className="border border-gray-300 px-2 py-1 text-left font-semibold text-gray-700 whitespace-nowrap">
+                      {cell}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, ri) => (
+                  <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    {parseRow(row).map((cell, ci) => (
+                      <td key={ci} className="border border-gray-300 px-2 py-1 text-gray-800">
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    } else {
+      // 通常テキスト行を収集
+      const textLines: string[] = []
+      while (i < lines.length && !lines[i].trim().startsWith('|')) {
+        textLines.push(lines[i])
+        i++
+      }
+      const text = textLines.join('\n').trim()
+      if (text) {
+        blocks.push(
+          <p key={blocks.length} className="whitespace-pre-wrap leading-relaxed">
+            {text}
+          </p>
+        )
+      }
+    }
+  }
+
+  return <div className="space-y-1">{blocks}</div>
+}
+
 // ── AIアシスタント ──────────────────────────────────────────────────────────
 
 const MUTATING_TOOLS = new Set([
@@ -401,10 +471,10 @@ function ConstraintPanel({ onScheduleChanged }: { onScheduleChanged: () => void 
         <div className="px-4 py-3 space-y-3 max-h-80 overflow-y-auto">
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap leading-relaxed' : 'bg-gray-100 text-gray-800 rounded-bl-sm'
               }`}>
-                {m.content}
+                {m.role === 'assistant' ? <MarkdownMessage content={m.content} /> : m.content}
               </div>
             </div>
           ))}
