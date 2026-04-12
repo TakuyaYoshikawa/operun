@@ -83,6 +83,7 @@ const TAB_CONTEXT: Record<Tab, string> = {
   calendar:  'カレンダー例外日（add_calendar_exception ツールで登録できます。日付・稼働時間・名前を指定してください）',
   templates: '工程テンプレート（現在AIから直接登録できません。手動フォームをご利用ください）',
   settings:  '稼働設定',
+  users:     'ユーザー管理（ユーザーの追加・ロール変更はマスタ管理画面の「ユーザー管理」タブから行ってください）',
 }
 
 type AgentMsg = { role: 'user' | 'assistant'; content: string; tool_calls?: { tool: string; input: Record<string, unknown>; result: unknown }[] }
