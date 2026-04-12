@@ -437,7 +437,7 @@ export default function GanttPage() {
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [rowView, setRowView] = useState<RowView>('machine')
-  const [rangePreset, setRangePreset] = useState<'2w' | '4w' | '3m' | 'all'>('all')
+  const [rangePreset, setRangePreset] = useState<'2w' | '4w' | '3m' | 'all'>('2w')
   const [windowStart, setWindowStart] = useState<Date>(() => { const d = new Date(); d.setHours(0,0,0,0); return d })
   const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
 
