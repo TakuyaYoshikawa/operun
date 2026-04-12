@@ -257,6 +257,7 @@ const CONSTRAINT_PROMPTS = [
   '現在の制約設定を確認して',
   'メンテナンスの予定を確認したい',
   '稼働設備の一覧を見せて',
+  '品番ABCの納期を変更してください',
 ]
 
 const ORDER_EXAMPLES = [
