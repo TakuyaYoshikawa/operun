@@ -518,7 +518,7 @@ export default function GanttPage() {
   const [orderModalId, setOrderModalId] = useState<number | null>(null)
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
-  const [tabMode, setTabMode] = useState<TabMode>('gantt')
+  // const [tabMode, setTabMode] = useState<TabMode>('gantt')
   const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
 
   // ── DnD ─────────────────────────────────────────────────────────────────────
@@ -610,11 +610,11 @@ export default function GanttPage() {
     queryFn: () => machinesApi.list().then(r => r.data),
   })
 
-  const { data: loadData } = useQuery({
-    queryKey: ['load-chart', viewDraft],
-    queryFn: () => scheduleApi.getLoadChart(21, viewDraft).then(r => r.data),
-    enabled: tabMode === 'load',
-  })
+  // 負荷グラフ（一時非表示）
+  // const { data: loadData } = useQuery({
+  //   queryKey: ['load-chart', viewDraft],
+  //   queryFn: () => scheduleApi.getLoadChart(21, viewDraft).then(r => r.data),
+  // })
 
   // ── DnD: document-level mouse handlers ──────────────────────────────────────
   // 現在のレンダリング値をrefで保持（closureのstale問題を回避）
@@ -971,19 +971,8 @@ export default function GanttPage() {
               {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
             </button>
           )}
-          {/* ガント/負荷グラフ 切替 */}
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
-            <button
-              onClick={() => setTabMode('gantt')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${tabMode === 'gantt' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
-            >ガント</button>
-            <button
-              onClick={() => setTabMode('load')}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${tabMode === 'load' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
-            >負荷グラフ</button>
-          </div>
-          {/* 日/時間 切替（ガントモード時のみ） */}
-          {tabMode === 'gantt' && (
+          {/* 日/時間 切替 */}
+          {(
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
             <button
               onClick={() => setViewMode('day')}
@@ -1072,23 +1061,10 @@ export default function GanttPage() {
         )}
       </div>
 
-      {/* 負荷グラフタブ */}
-      {tabMode === 'load' && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm mb-6">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">設備別負荷グラフ（21日間）</h2>
-            <div className="text-xs text-gray-400">棒の高さ = 稼働率、数字 = 負荷時間</div>
-          </div>
-          {loadData ? (
-            <LoadChart data={loadData.machines} days={21} />
-          ) : (
-            <div className="p-8 text-center text-gray-400 text-sm">読み込み中...</div>
-          )}
-        </div>
-      )}
+      {/* 負荷グラフ（一時非表示） */}
 
-      {/* ガントチャート本体（ガントタブ時のみ） */}
-      {tabMode === 'gantt' && (<>
+      {/* ガントチャート本体 */}
+      {(<>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div className="flex">
           {/* 設備ラベル列 */}
