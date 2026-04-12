@@ -4,6 +4,7 @@ import { machinesApi } from '../api/machines'
 import { scheduleApi } from '../api/schedule'
 import { ordersApi } from '../api/orders'
 import { customersApi } from '../api/customers'
+import { productTemplatesApi, type ProductTemplate } from '../api/productTemplates'
 import { CustomerCreateModal } from '../components/CustomerCreateModal'
 import type { DeliverySimResult, DeliverySimScenario } from '../api/schedule'
 
@@ -270,6 +271,12 @@ export default function DeliverySimPage() {
     queryFn: () => machinesApi.list({ is_active: true }).then(r => r.data),
   })
 
+  const { data: templates } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => productTemplatesApi.list().then(r => r.data),
+  })
+
+  const [selectedTemplate, setSelectedTemplate] = useState<ProductTemplate | null>(null)
   const [productName, setProductName] = useState('')
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date()
@@ -304,6 +311,12 @@ export default function DeliverySimPage() {
     },
   })
 
+  const applyTemplate = (t: ProductTemplate) => {
+    setSelectedTemplate(t)
+    setProductName(t.product_name)
+    setOps(t.operations.map(op => ({ machine_id: op.machine_id, duration_hours: op.hours_per_unit })))
+  }
+
   const updateOp = (i: number, patch: Partial<SimOp>) =>
     setOps(prev => prev.map((op, idx) => idx === i ? { ...op, ...patch } : op))
   const addOp    = () => setOps(prev => [...prev, { machine_id: 0, duration_hours: 1 }])
@@ -327,6 +340,48 @@ export default function DeliverySimPage() {
 
       <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
         <form onSubmit={handleSubmit} className="space-y-5">
+
+          {/* 工程テンプレート選択 */}
+          {templates && templates.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-blue-800">工程テンプレートから選択</span>
+                {selectedTemplate && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedTemplate(null); setProductName(''); setOps([{ machine_id: 0, duration_hours: 1 }]) }}
+                    className="text-xs text-blue-500 hover:text-blue-700"
+                  >
+                    クリア
+                  </button>
+                )}
+              </div>
+              <select
+                value={selectedTemplate?.id ?? ''}
+                onChange={e => {
+                  const t = templates.find(t => t.id === Number(e.target.value))
+                  if (t) applyTemplate(t)
+                }}
+                className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white"
+              >
+                <option value="">テンプレートを選択...</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>{t.product_name}（{t.product_code}）</option>
+                ))}
+              </select>
+              {selectedTemplate && (
+                <div className="mt-2 space-y-1">
+                  {selectedTemplate.operations.map((op, i) => (
+                    <div key={op.id} className="flex items-center gap-2 text-xs text-blue-700">
+                      <span className="w-4 h-4 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center font-bold flex-shrink-0">{i + 1}</span>
+                      <span className="flex-1">{op.machine_name}</span>
+                      <span className="text-blue-500">{op.hours_per_unit}h</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">品名</label>
