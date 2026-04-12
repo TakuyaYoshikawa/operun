@@ -437,6 +437,8 @@ export default function GanttPage() {
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [rowView, setRowView] = useState<RowView>('machine')
+  const [rangePreset, setRangePreset] = useState<'2w' | '4w' | '3m' | 'all'>('all')
+  const [windowStart, setWindowStart] = useState<Date>(() => { const d = new Date(); d.setHours(0,0,0,0); return d })
   const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
 
   // ── DnD ─────────────────────────────────────────────────────────────────────
@@ -800,10 +802,24 @@ export default function GanttPage() {
 
   // 表示期間
   const allDates = tasks.flatMap(t => [new Date(t.start_date), new Date(t.end_date)])
-  const minDate  = new Date(Math.min(...allDates.map(d => d.getTime())))
-  const maxDate  = new Date(Math.max(...allDates.map(d => d.getTime())))
-  minDate.setDate(minDate.getDate() - 1)
-  maxDate.setDate(maxDate.getDate() + 2)
+  const taskMinDate = new Date(Math.min(...allDates.map(d => d.getTime())))
+  const taskMaxDate = new Date(Math.max(...allDates.map(d => d.getTime())))
+
+  const PRESET_DAYS: Record<string, number> = { '2w': 14, '4w': 28, '3m': 90 }
+  const minDate = (() => {
+    if (rangePreset === 'all') { const d = new Date(taskMinDate); d.setDate(d.getDate() - 1); return d }
+    return new Date(windowStart)
+  })()
+  const maxDate = (() => {
+    if (rangePreset === 'all') { const d = new Date(taskMaxDate); d.setDate(d.getDate() + 2); return d }
+    const d = new Date(windowStart); d.setDate(d.getDate() + PRESET_DAYS[rangePreset]); return d
+  })()
+
+  const shiftWindow = (dir: 1 | -1) => {
+    const n = PRESET_DAYS[rangePreset] ?? 14
+    setWindowStart(d => { const nd = new Date(d); nd.setDate(nd.getDate() + dir * n); return nd })
+  }
+  const goToday = () => { const d = new Date(); d.setHours(0,0,0,0); setWindowStart(d) }
 
   const days: Date[] = []
   const cur = new Date(minDate)
@@ -910,6 +926,24 @@ export default function GanttPage() {
               {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
             </button>
           )}
+          {/* 表示期間フィルター */}
+          <div className="flex items-center gap-1">
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
+              {(['2w', '4w', '3m', 'all'] as const).map(p => (
+                <button key={p}
+                  onClick={() => { setRangePreset(p); if (p !== 'all') goToday() }}
+                  className={`px-2.5 py-1.5 rounded-md font-medium transition-colors text-xs ${rangePreset === p ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
+                >{{ '2w': '2週', '4w': '4週', '3m': '3ヶ月', 'all': '全期間' }[p]}</button>
+              ))}
+            </div>
+            {rangePreset !== 'all' && (
+              <div className="flex gap-1">
+                <button onClick={() => shiftWindow(-1)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 text-sm">‹</button>
+                <button onClick={goToday} className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs font-medium">今日</button>
+                <button onClick={() => shiftWindow(1)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 text-sm">›</button>
+              </div>
+            )}
+          </div>
           {/* 設備/受注 ビュー切替 */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
             <button
