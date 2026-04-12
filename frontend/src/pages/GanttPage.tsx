@@ -884,9 +884,6 @@ export default function GanttPage() {
     hasDraft, toWorkingX,
   }
 
-  // オーダー凡例（最大12件）
-  const uniqueOrders = [...new Map(tasks.map(t => [t.order_id, t])).values()]
-    .sort((a, b) => a.order_id - b.order_id)
     .slice(0, 12)
 
   return (
@@ -1026,24 +1023,6 @@ export default function GanttPage() {
           <button onClick={() => setViewDraft(true)} className="underline font-medium">確認する</button>
         </div>
       )}
-
-      {/* オーダー凡例 */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {uniqueOrders.map(t => {
-          const productName = t.text.includes(' / ') ? t.text.split(' / ')[1] : t.text
-          const orderNum    = t.text.includes(' / ') ? t.text.split(' / ')[0] : ''
-          return (
-            <div key={t.order_id} className="flex items-center gap-1.5 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg px-2.5 py-1">
-              <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: getOrderColor(t.order_id) }} />
-              <span className="text-gray-400">{orderNum}</span>
-              <span className="font-medium">{productName}</span>
-            </div>
-          )
-        })}
-        {uniqueOrders.length < [...new Map(tasks.map(t => [t.order_id, t])).values()].length && (
-          <div className="text-xs text-gray-400 flex items-center">他...</div>
-        )}
-      </div>
 
       {/* 負荷グラフ（一時非表示） */}
 
