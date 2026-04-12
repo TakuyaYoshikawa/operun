@@ -884,8 +884,6 @@ export default function GanttPage() {
     hasDraft, toWorkingX,
   }
 
-    .slice(0, 12)
-
   return (
     <div className="p-6" onMouseLeave={() => setTooltip(null)}>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
