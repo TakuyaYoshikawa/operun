@@ -508,7 +508,7 @@ function DraftEditModal({
 // ── メインページ ──────────────────────────────────────────────────────────────
 
 type ViewMode = 'day' | 'hour'
-type TabMode = 'gantt' | 'load'
+type RowView = 'machine' | 'order'
 
 export default function GanttPage() {
   const qc = useQueryClient()
@@ -518,7 +518,7 @@ export default function GanttPage() {
   const [orderModalId, setOrderModalId] = useState<number | null>(null)
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
-  // const [tabMode, setTabMode] = useState<TabMode>('gantt')
+  const [rowView, setRowView] = useState<RowView>('machine')
   const [confirmCopyOpen, setConfirmCopyOpen] = useState(false)
 
   // ── DnD ─────────────────────────────────────────────────────────────────────
@@ -912,6 +912,27 @@ export default function GanttPage() {
   const machineTypeMap = new Map(tasks.map(t => [t.resource, t.machine_type]))
   const machineIdMap   = new Map(tasks.map(t => [t.resource, t.machine_id]))
 
+  // 受注ビュー用: 受注ごとにグループ化して納期順にソート
+  const orderRows = (() => {
+    const map = new Map<number, { orderId: number; label: string; due_date: string; color: string; tasks: GanttTask[] }>()
+    for (const t of tasks) {
+      if (!map.has(t.order_id)) {
+        const [orderNum, productName] = t.text.includes(' / ') ? t.text.split(' / ') : [null, t.text]
+        map.set(t.order_id, {
+          orderId: t.order_id,
+          label: orderNum ? `${orderNum} ${productName}` : productName,
+          due_date: t.due_date,
+          color: getOrderColor(t.order_id),
+          tasks: [],
+        })
+      }
+      map.get(t.order_id)!.tasks.push(t)
+    }
+    return [...map.values()].sort((a, b) => a.due_date.localeCompare(b.due_date))
+  })()
+
+  const labelColWidth = rowView === 'order' ? 176 : 144  // 受注ビューは少し広め
+
   // 時間モード: 稼働時間内のオフセット計算
   const toWorkingX = (dt: Date): number => {
     const dayIdx = Math.floor((new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime()
@@ -971,6 +992,17 @@ export default function GanttPage() {
               {createDraftMut.isPending ? '作成中...' : '✏️ 現行をコピーして編集'}
             </button>
           )}
+          {/* 設備/受注 ビュー切替 */}
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
+            <button
+              onClick={() => setRowView('machine')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${rowView === 'machine' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
+            >設備</button>
+            <button
+              onClick={() => setRowView('order')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${rowView === 'order' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}
+            >受注</button>
+          </div>
           {/* 日/時間 切替 */}
           {(
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg text-sm">
@@ -1067,18 +1099,31 @@ export default function GanttPage() {
       {(<>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div className="flex">
-          {/* 設備ラベル列 */}
-          <div className="flex-shrink-0 w-36 border-r border-gray-200">
-            <div className="h-10 border-b border-gray-200 bg-gray-50 flex items-center px-3 text-xs font-medium text-gray-500">設備</div>
-            {machines.map(m => (
-              <div
-                key={m}
-                style={{ height: rowHeight }}
-                className="flex items-center px-3 text-sm font-medium text-gray-700 border-b border-gray-100"
-              >
-                {m}
-              </div>
-            ))}
+          {/* ラベル列（設備ビュー / 受注ビュー共通） */}
+          <div className="flex-shrink-0 border-r border-gray-200" style={{ width: labelColWidth }}>
+            <div className="h-10 border-b border-gray-200 bg-gray-50 flex items-center px-3 text-xs font-medium text-gray-500">
+              {rowView === 'machine' ? '設備' : '受注'}
+            </div>
+            {rowView === 'machine'
+              ? machines.map(m => (
+                  <div key={m} style={{ height: rowHeight }}
+                    className="flex items-center px-3 text-sm font-medium text-gray-700 border-b border-gray-100 truncate">
+                    {m}
+                  </div>
+                ))
+              : orderRows.map(row => (
+                  <div key={row.orderId} style={{ height: rowHeight }}
+                    className="flex items-center gap-2 px-3 border-b border-gray-100 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: row.color }} />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-gray-700 truncate leading-tight">{row.label}</div>
+                      <div className={`text-[10px] leading-tight ${row.tasks.some(t => t.is_delayed) ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                        納期 {row.due_date}
+                      </div>
+                    </div>
+                  </div>
+                ))
+            }
           </div>
 
           {/* スクロール可能なガントエリア */}
@@ -1101,37 +1146,70 @@ export default function GanttPage() {
                     </div>
                   ))}
                 </div>
-                {/* 各設備行（日モード） */}
-                {machines.map(machineName => {
-                  const isTargetRow = dragTarget?.machine === machineName
-                  const rowBg = isTargetRow
-                    ? dragTarget!.isValid ? 'bg-green-50' : 'bg-red-50'
-                    : ''
-                  return (
-                    <div key={machineName} style={{ height: rowHeight, width: days.length * dayWidth }}
-                      className={`relative border-b border-gray-100 transition-colors ${rowBg}`}
-                    >
-                      {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && (
-                        <div key={i} style={{ left: i * dayWidth, width: dayWidth }}
-                          className={`absolute top-0 bottom-0 opacity-30 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
-                      ))}
-                      {tasks.filter(t => t.resource === machineName).map(t => (
-                        <GanttBar key={t.id} task={t} dayWidth={dayWidth} startDay={minDate}
-                          onHover={(task, x, y) => setTooltip({ task, x, y })} onLeave={() => setTooltip(null)}
-                          onClick={handleBarClick} onMouseDown={handleBarMouseDown}
-                          onResizeStart={handleResizeMouseDown}
-                          draftMode={viewDraft}
-                          isDragging={dragTarget?.taskId === t.id} />
-                      ))}
-                      {/* ドロップ不可バッジ */}
-                      {dragTarget?.machine === machineName && !dragTarget.isValid && (
-                        <div className="absolute top-1 right-2 text-xs text-red-500 font-medium pointer-events-none z-20">
-                          ✕ 別グループ
+                {/* 各行（日モード） */}
+                {rowView === 'machine'
+                  ? machines.map(machineName => {
+                      const isTargetRow = dragTarget?.machine === machineName
+                      const rowBg = isTargetRow ? (dragTarget!.isValid ? 'bg-green-50' : 'bg-red-50') : ''
+                      return (
+                        <div key={machineName} style={{ height: rowHeight, width: days.length * dayWidth }}
+                          className={`relative border-b border-gray-100 transition-colors ${rowBg}`}>
+                          {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && (
+                            <div key={i} style={{ left: i * dayWidth, width: dayWidth }}
+                              className={`absolute top-0 bottom-0 opacity-30 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
+                          ))}
+                          {tasks.filter(t => t.resource === machineName).map(t => (
+                            <GanttBar key={t.id} task={t} dayWidth={dayWidth} startDay={minDate}
+                              onHover={(task, x, y) => setTooltip({ task, x, y })} onLeave={() => setTooltip(null)}
+                              onClick={handleBarClick} onMouseDown={handleBarMouseDown}
+                              onResizeStart={handleResizeMouseDown}
+                              draftMode={viewDraft} isDragging={dragTarget?.taskId === t.id} />
+                          ))}
+                          {dragTarget?.machine === machineName && !dragTarget.isValid && (
+                            <div className="absolute top-1 right-2 text-xs text-red-500 font-medium pointer-events-none z-20">✕ 別グループ</div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
+                      )
+                    })
+                  : orderRows.map(row => (
+                      <div key={row.orderId} style={{ height: rowHeight, width: days.length * dayWidth }}
+                        className="relative border-b border-gray-100">
+                        {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && (
+                          <div key={i} style={{ left: i * dayWidth, width: dayWidth }}
+                            className={`absolute top-0 bottom-0 opacity-30 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
+                        ))}
+                        {/* 納期ライン */}
+                        {(() => {
+                          const dueX = (new Date(row.due_date).getTime() - minDate.getTime()) / 86400000 * dayWidth
+                          return dueX >= 0 && dueX <= days.length * dayWidth
+                            ? <div style={{ left: dueX, top: 4, bottom: 4 }}
+                                className="absolute w-px bg-red-400 opacity-60 pointer-events-none z-10" />
+                            : null
+                        })()}
+                        {row.tasks.map(t => {
+                          const s = new Date(t.start_date)
+                          const e = new Date(t.end_date)
+                          const left  = Math.round((s.getTime() - minDate.getTime()) / 86400000 * dayWidth)
+                          const width = Math.max(Math.round((e.getTime() - s.getTime()) / 86400000 * dayWidth), 4)
+                          const isDone = t.op_status === 'done'
+                          return (
+                            <div key={t.id}
+                              onMouseMove={ev => setTooltip({ task: t, x: ev.clientX, y: ev.clientY })}
+                              onMouseLeave={() => setTooltip(null)}
+                              onClick={() => handleBarClick(t)}
+                              style={{ left, width, backgroundColor: row.color, opacity: isDone ? 0.45 : 1 }}
+                              className="absolute top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer select-none"
+                            >
+                              {isDone && <span className="mr-1 flex-shrink-0">✓</span>}
+                              {t.is_locked && !isDone && <span className="mr-1 flex-shrink-0 opacity-80">🔒</span>}
+                              {t.is_urgent && !isDone && <span className="mr-1 flex-shrink-0 text-yellow-200 font-bold">!</span>}
+                              <span className="truncate">{t.resource}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))
+                }
               </>
             ) : (
               <>
@@ -1165,8 +1243,8 @@ export default function GanttPage() {
                     </div>
                   )
                 })()}
-                {/* 各設備行（時間モード） */}
-                {machines.map(machineName => {
+                {/* 各行（時間モード） */}
+                {rowView === 'machine' ? machines.map(machineName => {
                   const totalW = days.length * dayWidth
                   const hours  = Array.from({ length: WORK_HOURS }, (_, i) => WORK_START + i)
                   const isTargetRow = dragTarget?.machine === machineName
@@ -1235,6 +1313,54 @@ export default function GanttPage() {
                           ✕ 別グループ
                         </div>
                       )}
+                    </div>
+                  )
+                }) : orderRows.map(row => {
+                  const totalW = days.length * dayWidth
+                  const hours  = Array.from({ length: WORK_HOURS }, (_, i) => WORK_START + i)
+                  return (
+                    <div key={row.orderId} style={{ height: rowHeight, width: totalW }}
+                      className="relative border-b border-gray-100">
+                      {days.map((d, di) => (
+                        <div key={d.toISOString()}>
+                          {(d.getDay() === 0 || d.getDay() === 6) && (
+                            <div style={{ left: di * dayWidth, width: dayWidth }}
+                              className={`absolute top-0 bottom-0 opacity-20 ${d.getDay() === 0 ? 'bg-red-100' : 'bg-blue-100'}`} />
+                          )}
+                          {hours.map((_, hi) => (
+                            <div key={hi} style={{ left: di * dayWidth + hi * hourWidth, width: hourWidth }}
+                              className="absolute top-0 bottom-0 border-r border-gray-100" />
+                          ))}
+                        </div>
+                      ))}
+                      {/* 納期ライン */}
+                      {(() => {
+                        const dueX = toWorkingX(new Date(row.due_date))
+                        return dueX >= 0 && dueX <= totalW
+                          ? <div style={{ left: dueX, top: 4, bottom: 4 }}
+                              className="absolute w-px bg-red-400 opacity-60 pointer-events-none z-10" />
+                          : null
+                      })()}
+                      {row.tasks.map(t => {
+                        const s = new Date(t.start_date)
+                        const e = new Date(t.end_date)
+                        const left  = toWorkingX(s)
+                        const width = Math.max(toWorkingX(e) - left, 4)
+                        const isDone = t.op_status === 'done'
+                        return (
+                          <div key={t.id}
+                            onMouseMove={ev => setTooltip({ task: t, x: ev.clientX, y: ev.clientY })}
+                            onMouseLeave={() => setTooltip(null)}
+                            onClick={() => handleBarClick(t)}
+                            style={{ left, width, backgroundColor: row.color, opacity: isDone ? 0.45 : 1, position: 'absolute' }}
+                            className="top-1.5 h-7 rounded flex items-center px-2 text-white text-xs font-medium overflow-hidden cursor-pointer select-none">
+                            {isDone && <span className="mr-1 flex-shrink-0">✓</span>}
+                            {t.is_locked && !isDone && <span className="mr-1 flex-shrink-0 opacity-80">🔒</span>}
+                            {t.is_urgent && !isDone && <span className="mr-1 flex-shrink-0 text-yellow-200 font-bold">!</span>}
+                            <span className="truncate">{t.resource}</span>
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
