@@ -11,3 +11,4 @@ anthropic
 jpholiday
 httpx
 pydantic
+resend
