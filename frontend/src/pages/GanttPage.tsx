@@ -677,7 +677,7 @@ export default function GanttPage() {
   const [editTask, setEditTask] = useState<GanttTask | null>(null)
   const [orderModalId, setOrderModalId] = useState<number | null>(null)
   const [showNewOrderModal, setShowNewOrderModal] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('day')
+  const [viewMode, setViewMode] = useState<ViewMode>('hour')
   const [rowView, setRowView] = useState<RowView>('machine')
   const [rangePreset, setRangePreset] = useState<'2w' | '4w' | '3m' | 'all'>('2w')
   const [windowStart, setWindowStart] = useState<Date>(() => { const d = new Date(); d.setHours(0,0,0,0); return d })
