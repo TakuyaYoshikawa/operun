@@ -12,6 +12,7 @@ class Tenant(Base):
     name = Column(String, nullable=False)                    # 会社名
     plan = Column(String, default="trial")                   # trial/light/standard/pro
     created_at = Column(DateTime, server_default=func.now())
+    trial_ends_at = Column(DateTime, nullable=True)          # NULL の場合は created_at + 90日
 
     users = relationship("User", back_populates="tenant")
     machines = relationship("Machine", back_populates="tenant")

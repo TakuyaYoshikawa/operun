@@ -1,6 +1,7 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 load_dotenv()
 from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings, users
@@ -41,6 +42,7 @@ _add_column_if_missing("operations",      "not_before_date",     "DATE",        
 _add_column_if_missing("operations",      "schedule_locked",     "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
 _add_column_if_missing("tenant_settings", "saturday_off",        "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
 _add_column_if_missing("users",           "role",                "TEXT DEFAULT 'member'",   "TEXT DEFAULT 'member'")
+_add_column_if_missing("tenants",         "trial_ends_at",       "DATETIME",                "TIMESTAMP")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 
@@ -57,6 +59,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── トライアル期限チェックミドルウェア ──────────────────────────────────────────
+# 認証・設定系を除く全APIで期限切れテナントを 402 でブロックする
+_TRIAL_EXEMPT_PREFIXES = (
+    "/api/auth/",        # ログイン・登録
+    "/api/settings/trial",  # トライアル情報取得（フロントの表示用）
+    "/",                 # ヘルスチェック
+)
+
+@app.middleware("http")
+async def trial_check_middleware(request: Request, call_next):
+    path = request.url.path
+    # 免除パスはそのまま通す
+    if any(path.startswith(p) for p in _TRIAL_EXEMPT_PREFIXES) or path == "/":
+        return await call_next(request)
+
+    # Authorization ヘッダーがない場合は auth に任せる
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return await call_next(request)
+
+    try:
+        from jose import jwt as _jwt
+        from app.auth import SECRET_KEY, ALGORITHM
+        from app.database import SessionLocal
+        from app.routers.settings import get_trial_info
+        token = auth_header.split(" ", 1)[1]
+        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        tenant_id = payload.get("tenant_id")
+        if tenant_id:
+            db = SessionLocal()
+            try:
+                from app import models as _models
+                tenant = db.query(_models.Tenant).filter(_models.Tenant.id == tenant_id).first()
+                if tenant:
+                    info = get_trial_info(tenant)
+                    if info["is_expired"]:
+                        return JSONResponse(
+                            status_code=402,
+                            content={"detail": "trial_expired", "days_remaining": 0},
+                        )
+            finally:
+                db.close()
+    except Exception:
+        pass  # トークン不正等は各エンドポイントの認証に任せる
+
+    return await call_next(request)
+
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["認証"])
 app.include_router(orders.router, prefix="/api/orders", tags=["受注"])
