@@ -6,7 +6,7 @@ import { settingsApi } from '../api/settings'
 import { aiApi } from '../api/ai'
 import { OrderModal } from '../components/OrderModal'
 import type { ChatMessage } from '../api/ai'
-import type { GanttTask, MachineLoad } from '../api/schedule'
+import type { GanttTask } from '../api/schedule'
 
 const DRAFT_BANNER_CLASS = 'bg-yellow-50 border-yellow-300 text-yellow-800'
 
@@ -147,88 +147,6 @@ function GanttBar({
           onMouseDown={e => { e.stopPropagation(); onResizeStart?.(task, e) }}
         />
       )}
-    </div>
-  )
-}
-
-// ── 負荷グラフ ────────────────────────────────────────────────────────────────
-
-function LoadChart({ data }: { data: MachineLoad[]; days?: number }) {
-  const WEEKDAYS_SHORT = ['日', '月', '火', '水', '木', '金', '土']
-  const machines = data.filter(m => !m.is_outsource)
-
-  if (machines.length === 0) return (
-    <div className="p-8 text-center text-gray-400 text-sm">設備データがありません</div>
-  )
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse min-w-[600px]">
-        <thead>
-          <tr>
-            <th className="text-left px-3 py-2 bg-gray-50 border-b border-gray-200 font-medium text-gray-600 sticky left-0 z-10 w-32">設備</th>
-            {machines[0].days.map(d => {
-              const dt = new Date(d.date)
-              const dow = dt.getDay()
-              const isWeekend = dow === 0 || dow === 6
-              const isHoliday = d.capacity_hours === 0
-              return (
-                <th key={d.date}
-                  className={`text-center px-1 py-1.5 border-b border-gray-200 font-medium w-10 ${
-                    isHoliday ? 'bg-gray-100 text-gray-300' :
-                    isWeekend ? (dow === 0 ? 'bg-red-50 text-red-400' : 'bg-blue-50 text-blue-400') :
-                    'bg-gray-50 text-gray-500'
-                  }`}>
-                  <div>{dt.getMonth()+1}/{dt.getDate()}</div>
-                  <div className="text-[9px] opacity-70">{WEEKDAYS_SHORT[dow]}</div>
-                </th>
-              )
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {machines.map(m => (
-            <tr key={m.machine_id} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-3 py-2 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-100">{m.name}</td>
-              {m.days.map(d => {
-                const isHoliday = d.capacity_hours === 0
-                if (isHoliday) return (
-                  <td key={d.date} className="px-1 py-1.5 text-center bg-gray-50">
-                    <div className="text-gray-300 text-[10px]">休</div>
-                  </td>
-                )
-                const pct = Math.min(d.utilization * 100, 100)
-                const color = d.over_capacity ? 'bg-red-500' :
-                              pct >= 85 ? 'bg-orange-400' :
-                              pct >= 50 ? 'bg-blue-400' : 'bg-blue-200'
-                return (
-                  <td key={d.date} className="px-1 py-1.5 text-center" title={`${d.load_hours.toFixed(1)}h / ${d.capacity_hours}h`}>
-                    <div className="flex flex-col items-center gap-0.5">
-                      <div className="w-7 h-5 bg-gray-100 rounded-sm overflow-hidden flex items-end">
-                        <div
-                          className={`w-full rounded-sm transition-all ${color}`}
-                          style={{ height: `${Math.max(pct, d.load_hours > 0 ? 10 : 0)}%` }}
-                        />
-                      </div>
-                      {d.load_hours > 0 && (
-                        <span className={`text-[9px] font-medium tabular-nums ${d.over_capacity ? 'text-red-600' : 'text-gray-500'}`}>
-                          {d.load_hours.toFixed(0)}h
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center gap-4 text-[10px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-500 inline-block"/> 超過</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block"/> 高負荷(≥85%)</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-400 inline-block"/> 中(≥50%)</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-200 inline-block"/> 低(&lt;50%)</span>
-      </div>
     </div>
   )
 }
