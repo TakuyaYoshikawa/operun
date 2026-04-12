@@ -54,7 +54,7 @@ function TrialBadge({ info }: { info: TrialInfo }) {
         ? 'bg-red-50 text-red-600 border-red-200'
         : 'bg-yellow-50 text-yellow-700 border-yellow-200'
     }`}>
-      残り{info.days_remaining}日
+      トライアル残り{info.days_remaining}日
     </div>
   )
 }
