@@ -143,7 +143,8 @@ class Order(Base):
     tenant = relationship("Tenant", back_populates="orders")
     customer = relationship("Customer", back_populates="orders")
     operations = relationship("Operation", back_populates="order",
-                              cascade="all, delete-orphan")
+                              cascade="all, delete-orphan",
+                              order_by="Operation.sequence")
 
 
 class Operation(Base):
