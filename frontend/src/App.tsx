@@ -10,6 +10,7 @@ import DeliverySimPage from './pages/DeliverySimPage'
 import WorkPage from './pages/WorkPage'
 import AIChatPage from './pages/AIChatPage'
 import ConstraintsPage from './pages/ConstraintsPage'
+import ContactPage from './pages/ContactPage'
 import { settingsApi } from './api/settings'
 import type { TrialInfo } from './api/settings'
 
@@ -20,7 +21,7 @@ const queryClient = new QueryClient({
   },
 })
 
-type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'work' | 'ai' | 'constraints'
+type Page = 'gantt' | 'orders' | 'masters' | 'delivery' | 'work' | 'ai' | 'constraints' | 'contact'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'gantt',    label: 'ガントチャート',     icon: '📊' },
@@ -39,6 +40,7 @@ const PRO_NAV: { label: string; icon: string }[] = [
 const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'constraints', label: '制約設定の確認', icon: '🔒' },
   { id: 'masters',     label: 'マスタ管理',     icon: '⚙️' },
+  { id: 'contact',     label: 'お問い合わせ',   icon: '✉️' },
 ]
 
 // モバイル下部ナビに表示する項目
@@ -95,6 +97,7 @@ function PageContent({ page }: { page: Page }) {
       {page === 'work'        && <WorkPage />}
       {page === 'ai'          && <AIChatPage />}
       {page === 'constraints' && <ConstraintsPage />}
+      {page === 'contact'     && <ContactPage />}
     </>
   )
 }
