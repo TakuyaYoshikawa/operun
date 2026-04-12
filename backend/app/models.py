@@ -227,6 +227,21 @@ class TenantSettings(Base):
     tenant = relationship("Tenant")
 
 
+class Inquiry(Base):
+    """お問い合わせ"""
+    __tablename__ = "inquiries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    tenant_name = Column(String, nullable=False)
+    user_email = Column(String, nullable=False)
+    user_name = Column(String, nullable=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    tenant = relationship("Tenant")
+
+
 # ── Phase 3 ────────────────────────────────────────────────────────────────────
 
 class ProductTemplate(Base):

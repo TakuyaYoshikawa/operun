@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 load_dotenv()
-from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings, users
+from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings, users, inquiries
 from app.database import engine, Base, DATABASE_URL
 
 Base.metadata.create_all(bind=engine)
@@ -123,6 +123,7 @@ app.include_router(purchase_orders.router, prefix="/api/purchase-orders", tags=[
 app.include_router(operations.router, prefix="/api/operations", tags=["工程実績"])
 app.include_router(settings.router, prefix="/api/settings", tags=["設定"])
 app.include_router(users.router, prefix="/api/users", tags=["ユーザー管理"])
+app.include_router(inquiries.router, prefix="/api/inquiries", tags=["お問い合わせ"])
 
 @app.get("/")
 def root():
