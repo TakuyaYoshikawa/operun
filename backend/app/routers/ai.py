@@ -332,9 +332,11 @@ def ai_agent(
 ### スケジューリング制約設定
 - 設備の検索（search_machines）
 - 設備の稼働状態変更（update_machine_status）
+- 設備の稼働能力変更（update_machine_capacity）— 1日稼働時間・段取り時間・バッチ数・開始時刻
 - メンテナンス枠の登録（add_maintenance_window）
-- 工程制約の変更（update_operation_constraint）
+- 工程制約の変更（update_operation_constraint）— 設備固定・待機時間・開始不可日・スケジュールロック・特急フラグ
 - カレンダー例外日の追加（add_calendar_exception）
+- 工場全体設定の変更（update_tenant_settings）— 稼働開始時刻・1日稼働時間・土曜休日
 - 現在の制約設定を説明（explain_constraints）
 
 ## 操作ルール
@@ -579,7 +581,7 @@ def _build_agent_tools() -> list:
         },
         {
             "name": "update_operation_constraint",
-            "description": "工程の制約を変更する。設備固定・待機時間・開始不可日・スケジュールロックを設定できる。必ず確認後に実行すること。",
+            "description": "工程の制約を変更する。設備固定・待機時間・開始不可日・スケジュールロック・特急フラグを設定できる。必ず確認後に実行すること。",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -589,6 +591,7 @@ def _build_agent_tools() -> list:
                     "wait_hours_after": {"type": "number", "description": "工程完了後の待機時間（時間単位、例：8.0=8時間）"},
                     "not_before_date": {"type": "string", "description": "開始不可日（YYYY-MM-DD、この日より前に開始しない）"},
                     "schedule_locked": {"type": "boolean", "description": "true=スケジュール日時を固定（再スケジュールで変更しない）"},
+                    "is_urgent": {"type": "boolean", "description": "true=この工程を特急扱いにする（スケジューリング優先度が上がる）"},
                 },
                 "required": ["operation_id"],
             },
@@ -641,6 +644,33 @@ def _build_agent_tools() -> list:
                     "machine_type":      {"type": "string", "description": "対象設備タイプ（例：旋盤）"},
                 },
                 "required": ["name", "code"],
+            },
+        },
+        {
+            "name": "update_machine_capacity",
+            "description": "設備の稼働能力設定を変更する。1日稼働時間・段取り時間・バッチ処理数・稼働開始時刻を変更できる。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "machine_id":            {"type": "integer", "description": "設備ID（search_machinesで確認）"},
+                    "daily_capacity_hours":  {"type": "number",  "description": "1日稼働時間（時間。例：8.0）"},
+                    "setup_time_minutes":    {"type": "number",  "description": "段取り時間（分。例：30）"},
+                    "batch_capacity":        {"type": "integer", "description": "同時処理数（例：炉=4、通常=1）"},
+                    "work_start_hour":       {"type": "integer", "description": "稼働開始時刻（時。例：8。省略するとテナント設定に従う）"},
+                },
+                "required": ["machine_id"],
+            },
+        },
+        {
+            "name": "update_tenant_settings",
+            "description": "工場全体のスケジューリング設定を変更する。稼働開始時刻・1日稼働時間・土曜休日を変更できる。必ず確認後に実行すること。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "work_start_hour":    {"type": "integer", "description": "工場全体の稼働開始時刻（時。例：8）"},
+                    "work_hours_per_day": {"type": "number",  "description": "工場全体の1日稼働時間（時間。例：8.0）"},
+                    "saturday_off":       {"type": "boolean", "description": "true=土曜休日、false=土曜稼働"},
+                },
             },
         },
     ]
@@ -1025,6 +1055,9 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
         if "schedule_locked" in params:
             op.schedule_locked = params["schedule_locked"]
             changes["schedule_locked"] = params["schedule_locked"]
+        if "is_urgent" in params:
+            op.is_urgent = params["is_urgent"]
+            changes["is_urgent"] = "特急" if params["is_urgent"] else "通常"
 
         if not changes:
             return {"error": "変更する制約が指定されていません"}
@@ -1193,6 +1226,63 @@ def _execute_tool(name: str, params: dict, db: Session, tenant_id: int) -> dict:
             "name": process.name,
             "code": process.code,
             "message": f"工程「{process.name}」（{process.code}）を登録しました",
+        }
+
+    if name == "update_machine_capacity":
+        machine = db.query(models.Machine).filter(
+            models.Machine.id == params["machine_id"],
+            models.Machine.tenant_id == tenant_id,
+        ).first()
+        if not machine:
+            return {"error": f"設備ID {params['machine_id']} が見つかりません"}
+        changes = {}
+        if "daily_capacity_hours" in params:
+            machine.daily_capacity_hours = params["daily_capacity_hours"]
+            changes["daily_capacity_hours"] = f"{params['daily_capacity_hours']}時間/日"
+        if "setup_time_minutes" in params:
+            machine.setup_time_minutes = params["setup_time_minutes"]
+            changes["setup_time_minutes"] = f"{params['setup_time_minutes']}分"
+        if "batch_capacity" in params:
+            machine.batch_capacity = params["batch_capacity"]
+            changes["batch_capacity"] = f"同時{params['batch_capacity']}件"
+        if "work_start_hour" in params:
+            machine.work_start_hour = params["work_start_hour"] if params["work_start_hour"] is not None else None
+            changes["work_start_hour"] = f"{params['work_start_hour']}時" if params["work_start_hour"] is not None else "テナント設定に従う"
+        if not changes:
+            return {"error": "変更する項目が指定されていません"}
+        db.commit()
+        return {
+            "success": True,
+            "machine_id": machine.id,
+            "machine_name": machine.name,
+            "changes": changes,
+            "message": f"設備「{machine.name}」の稼働能力を更新しました: {changes}",
+        }
+
+    if name == "update_tenant_settings":
+        s = db.query(models.TenantSettings).filter(
+            models.TenantSettings.tenant_id == tenant_id,
+        ).first()
+        if not s:
+            s = models.TenantSettings(tenant_id=tenant_id, work_start_hour=8, work_hours_per_day=8.0, saturday_off=False)
+            db.add(s)
+        changes = {}
+        if "work_start_hour" in params:
+            s.work_start_hour = params["work_start_hour"]
+            changes["work_start_hour"] = f"{params['work_start_hour']}時開始"
+        if "work_hours_per_day" in params:
+            s.work_hours_per_day = params["work_hours_per_day"]
+            changes["work_hours_per_day"] = f"{params['work_hours_per_day']}時間/日"
+        if "saturday_off" in params:
+            s.saturday_off = params["saturday_off"]
+            changes["saturday_off"] = "土曜休日" if params["saturday_off"] else "土曜稼働"
+        if not changes:
+            return {"error": "変更する項目が指定されていません"}
+        db.commit()
+        return {
+            "success": True,
+            "changes": changes,
+            "message": f"工場設定を更新しました: {changes}",
         }
 
     if name == "run_schedule":
