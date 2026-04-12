@@ -12,7 +12,7 @@ import { settingsApi } from '../api/settings'
 import { aiApi } from '../api/ai'
 import type { ChatMessage as AiChatMessage } from '../api/ai'
 import { usersApi } from '../api/users'
-import type { User, UserInvite } from '../api/users'
+import type { User, UserInvite, TenantInfo } from '../api/users'
 // ── 設備グループ オートコンプリート ───────────────────────────────────────────
 
 function MachineTypeInput({ value, onChange, existingTypes }: {
@@ -902,6 +902,8 @@ function UsersTab() {
   const [inviteForm, setInviteForm] = useState<UserInvite>({ email: '', name: '', password: '', role: 'member' })
   const [editUserId, setEditUserId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<{ name: string; role: 'admin' | 'member'; password: string }>({ name: '', role: 'member', password: '' })
+  const [editingTenant, setEditingTenant] = useState(false)
+  const [tenantNameInput, setTenantNameInput] = useState('')
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -910,6 +912,10 @@ function UsersTab() {
   const { data: users, isLoading } = useQuery({
     queryKey: ['users'],
     queryFn: () => usersApi.list().then(r => r.data),
+  })
+  const { data: tenantInfo } = useQuery<TenantInfo>({
+    queryKey: ['tenantInfo'],
+    queryFn: () => usersApi.getTenant().then(r => r.data),
   })
 
   const inviteMut = useMutation({
@@ -938,7 +944,24 @@ function UsersTab() {
     },
   })
 
+  const updateTenantMut = useMutation({
+    mutationFn: (name: string) => usersApi.updateTenant(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tenantInfo'] })
+      setEditingTenant(false)
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ?? 'テナント名の更新に失敗しました')
+    },
+  })
+
   const isAdmin = me?.role === 'admin'
+
+  const startEditTenant = () => {
+    setTenantNameInput(tenantInfo?.tenant_name ?? '')
+    setEditingTenant(true)
+  }
 
   const startEdit = (u: User) => {
     setEditUserId(u.id)
@@ -956,6 +979,54 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
+      {/* テナント名 */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          会社・テナント情報
+        </div>
+        <div className="px-4 py-3">
+          {editingTenant ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={tenantNameInput}
+                onChange={e => setTenantNameInput(e.target.value)}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                placeholder="会社名を入力"
+                autoFocus
+              />
+              <button
+                onClick={() => updateTenantMut.mutate(tenantNameInput)}
+                disabled={!tenantNameInput.trim() || updateTenantMut.isPending}
+                className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {updateTenantMut.isPending ? '保存中...' : '保存'}
+              </button>
+              <button
+                onClick={() => setEditingTenant(false)}
+                className="text-xs border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-800">{tenantInfo?.tenant_name ?? '...'}</div>
+                <div className="text-xs text-gray-400 mt-0.5">プラン: {tenantInfo?.plan ?? '...'}</div>
+              </div>
+              {isAdmin && (
+                <button
+                  onClick={startEditTenant}
+                  className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                >
+                  編集
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-gray-500">同じテナントのメンバーを管理します。admin は全操作が可能、member は閲覧・入力のみです。</p>
         {isAdmin && (

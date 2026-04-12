@@ -32,9 +32,16 @@ export interface UserUpdate {
   password?: string
 }
 
+export interface TenantInfo {
+  tenant_name: string
+  plan: string
+}
+
 export const usersApi = {
   me: () => api.get<Me>('/auth/me'),
   list: () => api.get<User[]>('/users/'),
   invite: (data: UserInvite) => api.post<User>('/users/invite', data),
   update: (id: number, data: UserUpdate) => api.put<User>(`/users/${id}`, data),
+  getTenant: () => api.get<TenantInfo>('/settings/tenant'),
+  updateTenant: (tenant_name: string) => api.put<TenantInfo>('/settings/tenant', { tenant_name }),
 }

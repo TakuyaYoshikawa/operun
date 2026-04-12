@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import api from './api/client'
 import { ErrorBoundary } from './ErrorBoundary'
 import LoginPage from './pages/LoginPage'
@@ -10,6 +10,8 @@ import DeliverySimPage from './pages/DeliverySimPage'
 import WorkPage from './pages/WorkPage'
 import AIChatPage from './pages/AIChatPage'
 import ConstraintsPage from './pages/ConstraintsPage'
+import { settingsApi } from './api/settings'
+import type { TrialInfo } from './api/settings'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +44,47 @@ const SETTINGS_NAV: { id: Page; label: string; icon: string }[] = [
 // モバイル下部ナビに表示する項目
 const BOTTOM_NAV: Page[] = ['gantt', 'orders', 'delivery', 'work']
 
+// ── トライアルバッジ ───────────────────────────────────────────────────────────
+function TrialBadge({ info }: { info: TrialInfo }) {
+  if (info.days_remaining > 30) return null
+  const urgent = info.days_remaining <= 7
+  return (
+    <div className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+      urgent
+        ? 'bg-red-50 text-red-600 border-red-200'
+        : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+    }`}>
+      残り{info.days_remaining}日
+    </div>
+  )
+}
+
+// ── トライアル期限切れ画面 ────────────────────────────────────────────────────
+function TrialExpiredScreen({ onLogout }: { onLogout: () => void }) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full text-center space-y-4">
+        <div className="text-4xl">⏰</div>
+        <h1 className="text-xl font-bold text-gray-800">無料トライアル期間が終了しました</h1>
+        <p className="text-sm text-gray-500 leading-relaxed">
+          3ヶ月間の無料トライアルが終了しました。<br />
+          引き続きご利用いただくには、プランへのご加入をお願いします。
+        </p>
+        <div className="bg-gray-50 rounded-xl p-4 text-left space-y-1">
+          <p className="text-xs font-semibold text-gray-600">お問い合わせ</p>
+          <p className="text-xs text-gray-500">support@operun.jp</p>
+        </div>
+        <button
+          onClick={onLogout}
+          className="w-full border border-gray-300 text-gray-600 py-2 rounded-xl text-sm hover:bg-gray-50"
+        >
+          ログアウト
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function PageContent({ page }: { page: Page }) {
   return (
     <>
@@ -63,9 +106,19 @@ function Layout({ page, setPage, onLogout }: {
 }) {
   const [moreOpen, setMoreOpen] = useState(false)
 
+  const { data: trialInfo } = useQuery<TrialInfo>({
+    queryKey: ['trial'],
+    queryFn: () => settingsApi.getTrial().then(r => r.data),
+    refetchInterval: 60_000,
+  })
+
   const navigate = (p: Page) => {
     setPage(p)
     setMoreOpen(false)
+  }
+
+  if (trialInfo?.is_expired) {
+    return <TrialExpiredScreen onLogout={onLogout} />
   }
 
   return (
@@ -74,7 +127,10 @@ function Layout({ page, setPage, onLogout }: {
       {/* ── デスクトップ: 左サイドバー (md以上) ── */}
       <aside className="hidden md:flex w-52 bg-white border-r border-gray-200 flex-col flex-shrink-0 h-screen sticky top-0">
         <div className="px-5 py-5 border-b border-gray-100">
-          <div className="text-lg font-bold text-blue-700 tracking-tight">Operun</div>
+          <div className="flex items-center gap-2">
+            <div className="text-lg font-bold text-blue-700 tracking-tight">Operun</div>
+            {trialInfo && <TrialBadge info={trialInfo} />}
+          </div>
           <div className="text-xs text-gray-400 mt-0.5">生産スケジューラ</div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
