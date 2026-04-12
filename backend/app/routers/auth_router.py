@@ -6,7 +6,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app import models
-from app.auth import authenticate_user, create_access_token, hash_password
+from app.auth import authenticate_user, create_access_token, hash_password, get_current_user
 
 router = APIRouter()
 
@@ -30,6 +30,7 @@ class MeOut(BaseModel):
     user_id: int
     email: str
     name: str | None
+    role: str
     tenant_id: int
     tenant_name: str
     plan: str
@@ -50,12 +51,13 @@ def register(payload: TenantRegister, db: Session = Depends(get_db)):
     db.add(tenant)
     db.flush()
 
-    # ユーザー作成
+    # ユーザー作成（テナント最初のユーザーは admin）
     user = models.User(
         tenant_id=tenant.id,
         email=payload.email,
         hashed_password=hash_password(payload.password),
         name=payload.user_name,
+        role="admin",
     )
     db.add(user)
     db.commit()
@@ -68,6 +70,20 @@ def register(payload: TenantRegister, db: Session = Depends(get_db)):
         tenant_id=tenant.id,
         tenant_name=tenant.name,
         user_name=user.name,
+    )
+
+
+@router.get("/me", response_model=MeOut)
+def me(current_user: models.User = Depends(get_current_user)):
+    """現在ログイン中のユーザー情報を返す。"""
+    return MeOut(
+        user_id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        role=getattr(current_user, "role", "member") or "member",
+        tenant_id=current_user.tenant_id,
+        tenant_name=current_user.tenant.name,
+        plan=current_user.tenant.plan,
     )
 
 

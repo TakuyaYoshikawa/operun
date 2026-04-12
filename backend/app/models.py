@@ -29,6 +29,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    role = Column(String, default="member")           # admin / member
     created_at = Column(DateTime, server_default=func.now())
 
     tenant = relationship("Tenant", back_populates="users")

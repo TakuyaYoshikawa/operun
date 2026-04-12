@@ -11,6 +11,8 @@ import type { ProductTemplate, TemplateOperationIn } from '../api/productTemplat
 import { settingsApi } from '../api/settings'
 import { aiApi } from '../api/ai'
 import type { ChatMessage as AiChatMessage } from '../api/ai'
+import { usersApi } from '../api/users'
+import type { User, UserInvite } from '../api/users'
 // ── 設備グループ オートコンプリート ───────────────────────────────────────────
 
 function MachineTypeInput({ value, onChange, existingTypes }: {
@@ -54,14 +56,15 @@ function MachineTypeInput({ value, onChange, existingTypes }: {
   )
 }
 
-type Tab = 'machines' | 'customers' | 'calendar' | 'templates' | 'settings'
+type Tab = 'machines' | 'customers' | 'calendar' | 'templates' | 'settings' | 'users'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'machines', label: '設備マスタ' },
   { id: 'customers', label: '顧客マスタ' },
   { id: 'calendar', label: 'カレンダー' },
-  { id: 'templates', label: '品番テンプレート' },
+  { id: 'templates', label: '工程テンプレート' },
   { id: 'settings', label: '稼働設定' },
+  { id: 'users', label: 'ユーザー管理' },
 ]
 
 function getApiError(err: unknown): string {
@@ -78,7 +81,7 @@ const TAB_CONTEXT: Record<Tab, string> = {
   machines:  '設備マスタ（create_machine ツールで登録できます。設備名・コード・タイプ・段取り時間などを指定してください）',
   customers: '顧客マスタ（create_customer ツールで登録できます。会社名・コード・担当者名・電話・メールを指定してください）',
   calendar:  'カレンダー例外日（add_calendar_exception ツールで登録できます。日付・稼働時間・名前を指定してください）',
-  templates: '品番テンプレート（現在AIから直接登録できません。手動フォームをご利用ください）',
+  templates: '工程テンプレート（現在AIから直接登録できません。手動フォームをご利用ください）',
   settings:  '稼働設定',
 }
 
@@ -245,7 +248,7 @@ export default function MastersPage() {
   const deleteC = useMutation({ mutationFn: customersApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['customers'] }), onError: (err) => alert(getApiError(err)) })
   const resetC = () => { setCForm({ code: '', name: '', contact_name: '', phone: '', email: '', note: '' }); setCEditId(null) }
 
-  // ── 品番テンプレート ────────────────────────────────────────────────────────
+  // ── 工程テンプレート ────────────────────────────────────────────────────────
   const { data: templates } = useQuery({
     queryKey: ['templates'],
     queryFn: () => productTemplatesApi.list().then(r => r.data),
@@ -605,7 +608,7 @@ export default function MastersPage() {
         </div>
       )}
 
-      {/* 品番テンプレート */}
+      {/* 工程テンプレート */}
       {tab === 'templates' && (
         <div>
           {/* 登録フォーム */}
@@ -787,6 +790,9 @@ export default function MastersPage() {
 
       {/* 稼働設定 */}
       {tab === 'settings' && <SettingsTab />}
+
+      {/* ユーザー管理 */}
+      {tab === 'users' && <UsersTab />}
     </div>
   )
 }
@@ -882,6 +888,244 @@ function SettingsTab() {
           <p>※ この設定はスケジュール最適化時の稼働カレンダーに反映されます。</p>
           <p>※ 設備ごとの稼働時間は「設備マスタ」で個別に上書きできます。</p>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── ユーザー管理タブ ──────────────────────────────────────────────────────────
+
+function UsersTab() {
+  const qc = useQueryClient()
+  const [showInvite, setShowInvite] = useState(false)
+  const [inviteForm, setInviteForm] = useState<UserInvite>({ email: '', name: '', password: '', role: 'member' })
+  const [editUserId, setEditUserId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<{ name: string; role: 'admin' | 'member'; password: string }>({ name: '', role: 'member', password: '' })
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => usersApi.me().then(r => r.data),
+  })
+  const { data: users, isLoading } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => usersApi.list().then(r => r.data),
+  })
+
+  const inviteMut = useMutation({
+    mutationFn: (data: UserInvite) => usersApi.invite(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] })
+      setShowInvite(false)
+      setInviteForm({ email: '', name: '', password: '', role: 'member' })
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ?? 'ユーザーの追加に失敗しました')
+    },
+  })
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof usersApi.update>[1] }) =>
+      usersApi.update(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] })
+      setEditUserId(null)
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ?? '更新に失敗しました')
+    },
+  })
+
+  const isAdmin = me?.role === 'admin'
+
+  const startEdit = (u: User) => {
+    setEditUserId(u.id)
+    setEditForm({ name: u.name ?? '', role: u.role, password: '' })
+  }
+
+  const saveEdit = (u: User) => {
+    const data: Parameters<typeof usersApi.update>[1] = {
+      name: editForm.name || undefined,
+      role: editForm.role,
+    }
+    if (editForm.password) data.password = editForm.password
+    updateMut.mutate({ id: u.id, data })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-500">同じテナントのメンバーを管理します。admin は全操作が可能、member は閲覧・入力のみです。</p>
+        {isAdmin && (
+          <button
+            onClick={() => setShowInvite(v => !v)}
+            className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 whitespace-nowrap"
+          >
+            + メンバーを追加
+          </button>
+        )}
+      </div>
+
+      {/* 招待フォーム */}
+      {showInvite && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+          <p className="text-sm font-medium text-blue-800">新しいメンバーを追加</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">メールアドレス *</label>
+              <input
+                type="email" required
+                value={inviteForm.email}
+                onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="user@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">名前</label>
+              <input
+                value={inviteForm.name ?? ''}
+                onChange={e => setInviteForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="山田 太郎"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">初期パスワード *</label>
+              <input
+                type="password" required
+                value={inviteForm.password}
+                onChange={e => setInviteForm(f => ({ ...f, password: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="8文字以上を推奨"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">ロール</label>
+              <select
+                value={inviteForm.role}
+                onChange={e => setInviteForm(f => ({ ...f, role: e.target.value as 'admin' | 'member' }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+              >
+                <option value="member">member（一般）</option>
+                <option value="admin">admin（管理者）</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">初期パスワードは追加後に本人へ直接お伝えください。</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowInvite(false)}
+              className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-white"
+            >キャンセル</button>
+            <button
+              onClick={() => inviteMut.mutate(inviteForm)}
+              disabled={!inviteForm.email || !inviteForm.password || inviteMut.isPending}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {inviteMut.isPending ? '追加中...' : '追加する'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ユーザー一覧 */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          メンバー一覧（{users?.length ?? 0}名）
+        </div>
+        {isLoading ? (
+          <div className="p-4 text-sm text-gray-400 text-center">読み込み中...</div>
+        ) : (
+          users?.map(u => (
+            <div key={u.id} className="border-b border-gray-100 last:border-0">
+              {editUserId === u.id ? (
+                /* 編集行 */
+                <div className="px-4 py-3 space-y-2 bg-blue-50">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-500">名前</label>
+                      <input value={editForm.name}
+                        onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5" />
+                    </div>
+                    {isAdmin && (
+                      <div>
+                        <label className="text-xs text-gray-500">ロール</label>
+                        <select value={editForm.role}
+                          onChange={e => setEditForm(f => ({ ...f, role: e.target.value as 'admin' | 'member' }))}
+                          className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5 bg-white">
+                          <option value="member">member</option>
+                          <option value="admin">admin</option>
+                        </select>
+                      </div>
+                    )}
+                    <div className="col-span-2">
+                      <label className="text-xs text-gray-500">パスワード変更（任意）</label>
+                      <input type="password" value={editForm.password}
+                        onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))}
+                        placeholder="変更しない場合は空欄"
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm mt-0.5" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditUserId(null)}
+                      className="text-xs border border-gray-300 px-3 py-1.5 rounded-lg text-gray-600 hover:bg-white">
+                      キャンセル
+                    </button>
+                    <button onClick={() => saveEdit(u)}
+                      disabled={updateMut.isPending}
+                      className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                      {updateMut.isPending ? '保存中...' : '保存'}
+                    </button>
+                    {isAdmin && u.id !== me?.user_id && (
+                      <button
+                        onClick={() => updateMut.mutate({ id: u.id, data: { is_active: !u.is_active } })}
+                        disabled={updateMut.isPending}
+                        className={`ml-auto text-xs px-3 py-1.5 rounded-lg disabled:opacity-50 ${u.is_active ? 'text-red-600 hover:bg-red-50 border border-red-200' : 'text-green-600 hover:bg-green-50 border border-green-200'}`}
+                      >
+                        {u.is_active ? '無効化' : '有効化'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* 表示行 */
+                <div className="flex items-center px-4 py-3 gap-3">
+                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-sm font-bold text-blue-600 flex-shrink-0">
+                    {(u.name ?? u.email)[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-800 truncate">{u.name ?? '（名前未設定）'}</span>
+                      {u.id === me?.user_id && (
+                        <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">あなた</span>
+                      )}
+                      {!u.is_active && (
+                        <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded">無効</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 truncate">{u.email}</div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium border flex-shrink-0 ${
+                    u.role === 'admin'
+                      ? 'bg-purple-50 text-purple-700 border-purple-200'
+                      : 'bg-gray-100 text-gray-500 border-gray-200'
+                  }`}>
+                    {u.role === 'admin' ? '管理者' : 'メンバー'}
+                  </span>
+                  {(isAdmin || u.id === me?.user_id) && (
+                    <button onClick={() => startEdit(u)}
+                      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 flex-shrink-0">
+                      編集
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

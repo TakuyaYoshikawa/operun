@@ -65,6 +65,40 @@ def get_current_tenant_id(
         raise credentials_exception
 
 
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> "models.User":
+    """
+    JWT トークンからユーザーオブジェクトを返す Dependency。
+    ロールチェックが必要な API で使う。
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="認証が必要です",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if not user or not user.is_active:
+        raise credentials_exception
+    return user
+
+
+def require_admin(current_user: "models.User" = Depends(get_current_user)) -> "models.User":
+    """admin ロールのみ許可する Dependency。"""
+    if getattr(current_user, "role", "member") != "admin":
+        raise HTTPException(status_code=403, detail="管理者権限が必要です")
+    return current_user
+
+
 def authenticate_user(email: str, password: str, db: Session) -> models.User | None:
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user or not verify_password(password, user.hashed_password):

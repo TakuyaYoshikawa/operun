@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 load_dotenv()
-from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings
+from app.routers import orders, machines, schedule, csv_import, auth_router, customers, calendar, ai, product_templates, materials, outsource, purchase_orders, operations, settings, users
 from app.database import engine, Base, DATABASE_URL
 
 Base.metadata.create_all(bind=engine)
@@ -40,6 +40,7 @@ _add_column_if_missing("operations",      "wait_hours_after",    "FLOAT DEFAULT 
 _add_column_if_missing("operations",      "not_before_date",     "DATE",                    "DATE")
 _add_column_if_missing("operations",      "schedule_locked",     "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
 _add_column_if_missing("tenant_settings", "saturday_off",        "BOOLEAN DEFAULT 0",       "BOOLEAN DEFAULT FALSE")
+_add_column_if_missing("users",           "role",                "TEXT DEFAULT 'member'",   "TEXT DEFAULT 'member'")
 
 app = FastAPI(title="Operun API", version="0.1.0")
 
@@ -71,6 +72,7 @@ app.include_router(outsource.router, prefix="/api/outsource", tags=["外注管�
 app.include_router(purchase_orders.router, prefix="/api/purchase-orders", tags=["発注管理"])
 app.include_router(operations.router, prefix="/api/operations", tags=["工程実績"])
 app.include_router(settings.router, prefix="/api/settings", tags=["設定"])
+app.include_router(users.router, prefix="/api/users", tags=["ユーザー管理"])
 
 @app.get("/")
 def root():

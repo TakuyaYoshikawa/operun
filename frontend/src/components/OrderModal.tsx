@@ -317,7 +317,7 @@ export function OrderModal({ orderId, onClose, onChanged }: Props) {
               {/* テンプレート選択 */}
               {templates && templates.length > 0 && (
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
-                  <label className="block text-xs font-medium text-blue-700 mb-1.5">品番テンプレートから選択</label>
+                  <label className="block text-xs font-medium text-blue-700 mb-1.5">工程テンプレートから選択</label>
                   <select
                     value={selectedTemplate?.id ?? ''}
                     onChange={e => {
