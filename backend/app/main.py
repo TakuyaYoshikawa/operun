@@ -1,4 +1,5 @@
 import os
+import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -106,6 +107,53 @@ async def trial_check_middleware(request: Request, call_next):
         pass  # トークン不正等は各エンドポイントの認証に任せる
 
     return await call_next(request)
+
+
+# ── APIログ記録ミドルウェア ────────────────────────────────────────────────────
+# /api/* へのリクエストをテナントID・エンドポイント・ステータス・応答時間とともに記録する
+_LOG_SKIP_PREFIXES = ("/api/auth/",)  # ログイン等は記録しない
+
+@app.middleware("http")
+async def api_log_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+
+    path = request.url.path
+    if not path.startswith("/api/") or any(path.startswith(p) for p in _LOG_SKIP_PREFIXES):
+        return response
+
+    # テナントIDをトークンから取得（失敗時はNone）
+    tenant_id = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            from jose import jwt as _jwt
+            from app.auth import SECRET_KEY, ALGORITHM
+            payload = _jwt.decode(auth_header.split(" ", 1)[1], SECRET_KEY, algorithms=[ALGORITHM])
+            tenant_id = payload.get("tenant_id")
+        except Exception:
+            pass
+
+    try:
+        from app.database import SessionLocal
+        from app import models as _models
+        db = SessionLocal()
+        try:
+            db.add(_models.ApiLog(
+                tenant_id=tenant_id,
+                method=request.method,
+                path=path,
+                status_code=response.status_code,
+                response_ms=elapsed_ms,
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass  # ログ記録失敗はサイレントにスキップ
+
+    return response
 
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["認証"])

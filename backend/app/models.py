@@ -227,6 +227,19 @@ class TenantSettings(Base):
     tenant = relationship("Tenant")
 
 
+class ApiLog(Base):
+    """APIアクセスログ"""
+    __tablename__ = "api_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, nullable=True)
+    method = Column(String, nullable=False)
+    path = Column(String, nullable=False)
+    status_code = Column(Integer, nullable=False)
+    response_ms = Column(Integer, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class Inquiry(Base):
     """お問い合わせ"""
     __tablename__ = "inquiries"
