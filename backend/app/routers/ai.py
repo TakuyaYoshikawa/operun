@@ -347,11 +347,12 @@ def ai_agent(
    - ユーザーが「はい」「お願い」「実行して」等と返答したら実行する
 3. 変更完了後は変更内容を明示し、スケジュール再実行を提案する
 4. 設備名が不明な場合はまず search_machines で検索する
-5. 受注番号が不明な場合はまず search_orders で検索する
-6. **顧客名で受注を検索する場合**: search_customers で顧客IDを取得 → search_orders に customer_id を指定して受注一覧を取得する
-7. **複数受注を一括変更する場合**: search_ordersで対象受注一覧を取得 → 変更内容をユーザーに提示して確認 → bulk_update_orders で一括更新する
-6. 制約変更後は explain_constraints でサマリーを表示する
-7. 日本語で簡潔に回答する"""
+5. **設備が見つからなかった場合**: 必ず include_inactive=true を指定して再検索する。停止中の設備でもユーザーが指している可能性があるため、見つかったら「現在停止中ですが、〇〇という設備があります」と確認する
+6. 受注番号が不明な場合はまず search_orders で検索する
+7. **顧客名で受注を検索する場合**: search_customers で顧客IDを取得 → search_orders に customer_id を指定して受注一覧を取得する
+8. **複数受注を一括変更する場合**: search_ordersで対象受注一覧を取得 → 変更内容をユーザーに提示して確認 → bulk_update_orders で一括更新する
+9. 制約変更後は explain_constraints でサマリーを表示する
+10. 日本語で簡潔に回答する"""
 
     tool_calls_log: list = []
     MAX_ITERATIONS = 6
